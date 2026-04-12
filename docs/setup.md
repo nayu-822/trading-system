@@ -170,7 +170,7 @@ gui-tool/
 └── data/
 ```
 
-## 5. Node.js / Volta の導入手順
+## 5. Node.js バージョン管理方針
 
 `gui-tool` で Node.js を利用するため、Volta の導入を必須とする。
 

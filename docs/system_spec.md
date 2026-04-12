@@ -84,7 +84,7 @@ notification-service/
 
 ---
 
-### 3.3 gui-tool（Windows GUI）
+### 3.3 gui-tool（ローカルWeb UI）
 
 #### 目的
 - ログの可視化
@@ -123,7 +123,7 @@ gui-tool/
 ├── tests/
 ├── package.json
 ├── pnpm-lock.yaml
-└── nuxt.config.ts
+├── nuxt.config.ts
 └── data/
 
 ---
