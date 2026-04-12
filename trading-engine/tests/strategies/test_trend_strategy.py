@@ -9,7 +9,8 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from app.strategies.trend.trend_strategy import SignalType, TrendStrategy
+from app.strategies.signal import SignalType
+from app.strategies.trend.trend_strategy import TrendStrategy
 
 
 def test_generate_signal_returns_buy_on_golden_cross() -> None:

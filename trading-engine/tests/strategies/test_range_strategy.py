@@ -9,7 +9,8 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from app.strategies.range.range_strategy import RangeStrategy, SignalType
+from app.strategies.range.range_strategy import RangeStrategy
+from app.strategies.signal import SignalType
 
 
 def test_generate_signal_returns_buy_when_rsi_is_oversold() -> None:
