@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import logging
 
 import pandas as pd
 
 from app.strategies.signal import BaseSignal, SignalType
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -34,14 +30,10 @@ class TrendStrategy:
             なし
         """
         if self.short_window <= 0 or self.long_window <= 0:
-            message = "moving average window must be greater than zero"
-            logger.error(message)
-            raise ValueError(message)
+            raise ValueError("invalid parameter: moving average window must be greater than zero")
 
         if self.short_window >= self.long_window:
-            message = "short_window must be smaller than long_window"
-            logger.error(message)
-            raise ValueError(message)
+            raise ValueError("invalid parameter: short_window must be smaller than long_window")
 
     def generate_signal(self, market_data: pd.DataFrame) -> TrendSignal:
         """
@@ -88,18 +80,14 @@ class TrendStrategy:
             なし
         """
         if self.price_column not in market_data.columns:
-            message = f"{self.price_column} column is required"
-            logger.error(message)
-            raise ValueError(message)
+            raise ValueError(f"required column not found: {self.price_column}")
 
         minimum_rows = self.long_window + 1
         if len(market_data) < minimum_rows:
-            message = (
+            raise ValueError(
                 f"market_data must contain at least {minimum_rows} rows "
                 "to evaluate a moving average crossover"
             )
-            logger.error(message)
-            raise ValueError(message)
 
     def _detect_signal(
         self,

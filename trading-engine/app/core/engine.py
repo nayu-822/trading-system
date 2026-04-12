@@ -141,37 +141,56 @@ class Engine:
         戻り値:
             ExecutionResult | None: 注文実行時は実行結果、スキップ時は None
         """
-        if not self.market_time_checker.is_open(current_datetime=current_datetime):
-            self.system_logger.info("engine skipped: market is closed")
-            return None
+        action = "initialize"
 
-        market_data = self.data_provider.fetch(symbol=self.config.symbol)
-        signal = self.strategy.generate_signal(market_data=market_data)
-        self.system_logger.info(
-            "engine signal: symbol=%s signal=%s",
-            self.config.symbol,
-            signal.signal.value,
-        )
+        try:
+            if not self.market_time_checker.is_open(current_datetime=current_datetime):
+                self.system_logger.info(
+                    "engine skipped: symbol=%s action=skip reason=market_closed",
+                    self.config.symbol,
+                )
+                return None
 
-        if signal.signal == SignalType.HOLD:
+            action = "fetch_market_data"
+            market_data = self.data_provider.fetch(symbol=self.config.symbol)
+
+            action = "generate_signal"
+            signal = self.strategy.generate_signal(market_data=market_data)
             self.system_logger.info(
-                "engine skipped: symbol=%s reason=hold",
+                "engine signal: symbol=%s action=%s signal=%s",
                 self.config.symbol,
+                "signal_generated",
+                signal.signal.value,
             )
-            return None
 
-        order = self._build_order(market_data=market_data, signal=signal)
-        execution_result = self.executor.execute(order=order)
-        self.system_logger.info(
-            "engine executed: symbol=%s side=%s quantity=%s executed_price=%s success=%s message=%s",
-            order.symbol,
-            order.side,
-            execution_result.quantity,
-            execution_result.executed_price,
-            execution_result.success,
-            execution_result.message,
-        )
-        return execution_result
+            if signal.signal == SignalType.HOLD:
+                self.system_logger.info(
+                    "engine skipped: symbol=%s action=skip reason=hold",
+                    self.config.symbol,
+                )
+                return None
+
+            action = signal.signal.value
+            order = self._build_order(market_data=market_data, signal=signal)
+            execution_result = self.executor.execute(order=order)
+            self.system_logger.info(
+                "engine executed: symbol=%s action=%s quantity=%s executed_price=%s success=%s reason=%s",
+                order.symbol,
+                order.side,
+                execution_result.quantity,
+                execution_result.executed_price,
+                execution_result.success,
+                execution_result.message,
+            )
+            return execution_result
+        except Exception as exc:
+            self.system_logger.exception(
+                "engine failed: symbol=%s action=%s reason=%s",
+                self.config.symbol,
+                action,
+                str(exc),
+            )
+            raise
 
     def _build_order(self, market_data: pd.DataFrame, signal: BaseSignal) -> Order:
         """

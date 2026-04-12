@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import logging
 from pathlib import Path
 import sys
 
 import pandas as pd
+import pytest
 
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -100,6 +102,19 @@ class OpenMarketTimeChecker:
         return True
 
 
+class FailingDataProvider:
+    def fetch(self, symbol: str) -> pd.DataFrame:
+        """
+        例外ログ確認用に常に失敗するデータ取得処理。
+        引数:
+            symbol: 取得対象の銘柄コード
+
+        戻り値:
+            なし
+        """
+        raise ValueError("symbol not found: 7203")
+
+
 def test_run_once_does_not_process_when_market_is_closed() -> None:
     executor = DummyExecutor()
     engine = Engine(
@@ -182,3 +197,19 @@ def test_run_once_uses_domain_order_with_paper_executor() -> None:
     assert result is not None
     assert result.success is True
     assert result.executed_price == 102.0
+
+
+def test_run_once_logs_exception_when_processing_fails(caplog: pytest.LogCaptureFixture) -> None:
+    engine = Engine(
+        config=EngineConfig(symbol="7203", strategy_name="trend", quantity=100),
+        executor=DummyExecutor(),
+        strategy=DummyStrategy(signal_type=SignalType.BUY),
+        data_provider=FailingDataProvider(),
+        market_time_checker=OpenMarketTimeChecker(),
+    )
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(ValueError, match="symbol not found: 7203"):
+            engine.run_once()
+
+    assert "engine failed: symbol=7203 action=fetch_market_data reason=symbol not found: 7203" in caplog.text

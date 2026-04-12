@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import logging
 
 import pandas as pd
 
 from app.strategies.signal import BaseSignal, SignalType
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -34,14 +30,10 @@ class RangeStrategy:
             なし
         """
         if self.rsi_period <= 0:
-            message = "rsi_period must be greater than zero"
-            logger.error(message)
-            raise ValueError(message)
+            raise ValueError("invalid parameter: rsi_period must be greater than zero")
 
         if self.oversold_threshold >= self.overbought_threshold:
-            message = "oversold_threshold must be smaller than overbought_threshold"
-            logger.error(message)
-            raise ValueError(message)
+            raise ValueError("invalid parameter: oversold_threshold must be smaller than overbought_threshold")
 
     def generate_signal(self, market_data: pd.DataFrame) -> RangeSignal:
         """
@@ -73,18 +65,14 @@ class RangeStrategy:
             なし
         """
         if self.price_column not in market_data.columns:
-            message = f"{self.price_column} column is required"
-            logger.error(message)
-            raise ValueError(message)
+            raise ValueError(f"required column not found: {self.price_column}")
 
         minimum_rows = self.rsi_period + 1
         if len(market_data) < minimum_rows:
-            message = (
+            raise ValueError(
                 f"market_data must contain at least {minimum_rows} rows "
                 "to evaluate RSI"
             )
-            logger.error(message)
-            raise ValueError(message)
 
     def _calculate_rsi(self, price_series: pd.Series) -> pd.Series:
         """
