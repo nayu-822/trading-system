@@ -67,8 +67,12 @@ class RangeStrategy:
         if self.price_column not in market_data.columns:
             raise ValueError(f"required column not found: {self.price_column}")
 
-        if len(market_data) < self.rsi_period + 1:
-            return RangeSignal(signal=SignalType.HOLD, rsi=0.0)
+        minimum_rows = self.rsi_period + 1
+        if len(market_data) < minimum_rows:
+            raise ValueError(
+                f"market_data must contain at least {minimum_rows} rows "
+                "to evaluate RSI"
+            )
 
         price_series = market_data[self.price_column].astype(float)
         rsi_series = self._calculate_rsi(price_series=price_series)

@@ -109,11 +109,14 @@ def test_run_backtest_builds_dependencies_and_returns_result(monkeypatch: pytest
     try:
         provider = DummyProvider()
         monkeypatch.setattr(run_backtest_module, "YFinanceDataProvider", lambda: provider)
-        monkeypatch.setattr(
-            run_backtest_module,
-            "create_strategy",
-            lambda strategy_name, **kwargs: DummyStrategy(),
-        )
+        captured_strategy_arguments: dict[str, object] = {}
+
+        def create_dummy_strategy(strategy_name: str, **kwargs: object) -> DummyStrategy:
+            captured_strategy_arguments["strategy_name"] = strategy_name
+            captured_strategy_arguments.update(kwargs)
+            return DummyStrategy()
+
+        monkeypatch.setattr(run_backtest_module, "create_strategy", create_dummy_strategy)
         monkeypatch.setattr(run_backtest_module, "create_executor", lambda: DummyExecutor())
         monkeypatch.setattr(run_backtest_module, "TradeLogger", DummyTradeLogger)
 
@@ -140,6 +143,7 @@ def test_run_backtest_builds_dependencies_and_returns_result(monkeypatch: pytest
         assert captured_engine_arguments["config"].strategy_name == "trend"
         assert captured_engine_arguments["config"].quantity == 250
         assert captured_engine_arguments["trade_logger"].log_file_path == temp_dir / "trade_log.csv"
+        assert captured_strategy_arguments["strategy_name"] == "trend"
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -161,6 +165,40 @@ def test_create_strategy_returns_range_strategy_with_rsi_parameters() -> None:
     assert strategy.rsi_period == 10
     assert strategy.lower_threshold == 25.0
     assert strategy.upper_threshold == 75.0
+
+
+def test_run_backtest_passes_range_parameters_to_create_strategy(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = DummyProvider()
+    captured_strategy_arguments: dict[str, object] = {}
+
+    def create_dummy_strategy(strategy_name: str, **kwargs: object) -> DummyStrategy:
+        captured_strategy_arguments["strategy_name"] = strategy_name
+        captured_strategy_arguments.update(kwargs)
+        return DummyStrategy()
+
+    monkeypatch.setattr(run_backtest_module, "YFinanceDataProvider", lambda: provider)
+    monkeypatch.setattr(run_backtest_module, "create_strategy", create_dummy_strategy)
+    monkeypatch.setattr(run_backtest_module, "create_executor", lambda: DummyExecutor())
+    monkeypatch.setattr(run_backtest_module, "TradeLogger", DummyTradeLogger)
+    monkeypatch.setattr(run_backtest_module, "BacktestEngine", lambda **kwargs: DummyBacktestEngine(**kwargs))
+
+    result = run_backtest_module.run_backtest(
+        symbol="1306.T",
+        period="1y",
+        interval="1d",
+        strategy_name="range",
+        quantity=100,
+        rsi_period=10,
+        rsi_lower=25.0,
+        rsi_upper=75.0,
+        trade_log_path=Path(".tmp/range-test.csv"),
+    )
+
+    assert result.total_trades == 1
+    assert captured_strategy_arguments["strategy_name"] == "range"
+    assert captured_strategy_arguments["rsi_period"] == 10
+    assert captured_strategy_arguments["rsi_lower"] == 25.0
+    assert captured_strategy_arguments["rsi_upper"] == 75.0
 
 
 def test_run_backtest_propagates_data_provider_failure(monkeypatch: pytest.MonkeyPatch) -> None:

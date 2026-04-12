@@ -13,6 +13,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from app.backtest.backtest_engine import BacktestConfig, BacktestEngine
 from app.domain.models import ExecutionResult, Order
 from app.logging.trade_logger import TradeLog
+from app.strategies.range.range_strategy import RangeStrategy
 from app.strategies.signal import BaseSignal, SignalType
 
 
@@ -412,3 +413,33 @@ def test_backtest_engine_raises_when_price_column_is_missing() -> None:
 
     with pytest.raises(ValueError, match="required columns are missing: close"):
         engine.run(market_data=pd.DataFrame({"timestamp": pd.to_datetime(["2026-01-05 09:00:00"])}))
+
+
+def test_backtest_engine_skips_range_strategy_warmup_errors() -> None:
+    strategy = RangeStrategy(rsi_period=5, lower_threshold=30.0, upper_threshold=70.0)
+    executor = DummyExecutor()
+    engine = BacktestEngine(
+        config=BacktestConfig(symbol="1306.T", strategy_name="range", quantity=100),
+        strategy=strategy,
+        executor=executor,
+    )
+    market_data = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                [
+                    "2026-01-05 09:00:00",
+                    "2026-01-06 09:00:00",
+                    "2026-01-07 09:00:00",
+                    "2026-01-08 09:00:00",
+                    "2026-01-09 09:00:00",
+                    "2026-01-10 09:00:00",
+                ]
+            ),
+            "close": [10.0, 9.0, 8.0, 7.0, 6.0, 5.0],
+        }
+    )
+
+    result = engine.run(market_data=market_data)
+
+    assert result.total_trades == 1
+    assert executor.called_orders[0].side == "buy"

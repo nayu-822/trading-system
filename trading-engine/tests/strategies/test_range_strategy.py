@@ -46,13 +46,12 @@ def test_generate_signal_returns_hold_when_rsi_is_between_thresholds() -> None:
     assert signal.signal == SignalType.HOLD
 
 
-def test_generate_signal_returns_hold_when_market_data_is_too_short() -> None:
+def test_generate_signal_raises_when_market_data_is_too_short() -> None:
     market_data = pd.DataFrame({"close": [1, 2, 3, 4, 5]})
     strategy = RangeStrategy(rsi_period=5)
 
-    signal = strategy.generate_signal(market_data=market_data)
-
-    assert signal.signal == SignalType.HOLD
+    with pytest.raises(ValueError, match="market_data must contain at least 6 rows to evaluate RSI"):
+        strategy.generate_signal(market_data=market_data)
 
 
 def test_generate_signal_raises_when_thresholds_are_invalid() -> None:
