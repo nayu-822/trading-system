@@ -5,6 +5,8 @@ from datetime import datetime
 import csv
 from pathlib import Path
 
+from app.domain.models import OrderSide
+
 
 TRADE_LOG_HEADERS: tuple[str, ...] = (
     "timestamp",
@@ -26,7 +28,7 @@ class TradeLog:
 
     timestamp: datetime
     symbol: str
-    side: str
+    side: OrderSide
     price: float
     quantity: float
     success: bool
@@ -51,6 +53,9 @@ class TradeLogger:
 
         戻り値:
             なし
+
+        補足:
+            message が None の場合は、CSV 上では空文字として保存する
         """
         self._validate_log(log=log)
         self.log_file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,7 +74,7 @@ class TradeLogger:
                     log.price,
                     log.quantity,
                     log.success,
-                    log.message,
+                    log.message or "",
                     log.strategy,
                 ]
             )

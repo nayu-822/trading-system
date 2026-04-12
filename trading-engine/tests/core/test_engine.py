@@ -237,7 +237,25 @@ def test_run_once_calls_trade_logger_after_execution() -> None:
     assert trade_logger.received_log.symbol == "7203"
     assert trade_logger.received_log.side == "buy"
     assert trade_logger.received_log.price == 102.0
+    assert trade_logger.received_log.quantity == 100.0
     assert trade_logger.received_log.strategy == "trend"
+
+
+def test_run_once_does_not_call_trade_logger_when_signal_is_hold() -> None:
+    trade_logger = DummyTradeLogger()
+    engine = Engine(
+        config=EngineConfig(symbol="7203", strategy_name="trend", quantity=100),
+        executor=DummyExecutor(),
+        strategy=DummyStrategy(signal_type=SignalType.HOLD),
+        data_provider=DummyDataProvider(),
+        market_time_checker=OpenMarketTimeChecker(),
+        trade_logger=trade_logger,
+    )
+
+    result = engine.run_once()
+
+    assert result is None
+    assert trade_logger.called is False
 
 
 def test_run_once_logs_exception_when_processing_fails(caplog: pytest.LogCaptureFixture) -> None:

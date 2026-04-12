@@ -132,3 +132,30 @@ def test_trade_logger_writes_expected_values() -> None:
         ]
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_trade_logger_writes_empty_message_when_message_is_none() -> None:
+    temp_dir = _create_workspace_temp_dir()
+
+    try:
+        log_file_path = temp_dir / "logs" / "trades" / "trade_log.csv"
+        trade_logger = TradeLogger(log_file_path=log_file_path)
+        trade_logger.log(
+            TradeLog(
+                timestamp=datetime(2026, 4, 12, 9, 10, 0),
+                symbol="7203",
+                side="buy",
+                price=2500.0,
+                quantity=100.0,
+                success=True,
+                message=None,
+                strategy="trend",
+            )
+        )
+
+        with log_file_path.open("r", encoding="utf-8", newline="") as csv_file:
+            rows = list(csv.reader(csv_file))
+
+        assert rows[1][6] == ""
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
