@@ -4,7 +4,8 @@ Thumbs.db
 
 # Editors
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 
 # Environment files
 .env
