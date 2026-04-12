@@ -56,6 +56,25 @@ class BacktestConfig:
 
 @dataclass(frozen=True)
 class BacktestResult:
+    """
+    単一ポジション前提のバックテスト結果を表すモデル。
+
+    引数:
+        trades: 実行された売買ログ一覧
+        total_trades: 総取引件数
+        buy_count: 買い取引件数
+        sell_count: 売り取引件数
+        total_pnl: 実現損益の合計
+        average_pnl: 1 決済あたりの平均損益
+        win_rate: 勝率
+        max_win_streak: 最大連勝数
+        max_loss_streak: 最大連敗数
+        max_drawdown: 累積損益ベースの最大ドローダウン額
+
+    戻り値:
+        なし
+    """
+
     trades: list[TradeLog]
     total_trades: int
     buy_count: int
@@ -65,12 +84,15 @@ class BacktestResult:
     win_rate: float
     max_win_streak: int
     max_loss_streak: int
+    max_drawdown: float
 
 
 @dataclass
 class BacktestEngine:
     """
     過去データを時系列に沿って逐次処理する簡易バックテストエンジン。
+
+    単一ポジションのみを扱い、同時に複数ポジションは保有しない。
     """
 
     config: BacktestConfig
@@ -85,7 +107,7 @@ class BacktestEngine:
             market_data: 時系列順に処理する市場データ
 
         戻り値:
-            BacktestResult: 売買件数を集計したバックテスト結果
+            BacktestResult: 売買件数と評価指標を集計したバックテスト結果
         """
         self._validate_market_data(market_data=market_data)
 
@@ -170,6 +192,7 @@ class BacktestEngine:
             win_rate=(self._count_wins(realized_pnls) / len(realized_pnls)) if realized_pnls else 0.0,
             max_win_streak=max_win_streak,
             max_loss_streak=max_loss_streak,
+            max_drawdown=self._calculate_max_drawdown(realized_pnls=realized_pnls),
         )
 
     def _validate_market_data(self, market_data: pd.DataFrame) -> None:
@@ -309,6 +332,26 @@ class BacktestEngine:
             int: 勝ちトレード数
         """
         return sum(1 for pnl in realized_pnls if pnl > 0)
+
+    def _calculate_max_drawdown(self, realized_pnls: list[float]) -> float:
+        """
+        実現損益の累積推移から最大ドローダウン額を計算する。
+        引数:
+            realized_pnls: 実現損益の一覧
+
+        戻り値:
+            float: 累積損益ベースの最大ドローダウン額
+        """
+        cumulative_pnl = 0.0
+        peak_pnl = 0.0
+        max_drawdown = 0.0
+
+        for pnl in realized_pnls:
+            cumulative_pnl += pnl
+            peak_pnl = max(peak_pnl, cumulative_pnl)
+            max_drawdown = max(max_drawdown, peak_pnl - cumulative_pnl)
+
+        return max_drawdown
 
     def _is_strategy_warmup_error(self, message: str) -> bool:
         """

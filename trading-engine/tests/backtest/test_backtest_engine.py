@@ -124,6 +124,7 @@ def test_backtest_engine_processes_market_data_sequentially() -> None:
     assert result.win_rate == 1.0
     assert result.max_win_streak == 1
     assert result.max_loss_streak == 0
+    assert result.max_drawdown == 0.0
 
 
 def test_backtest_engine_does_not_call_executor_when_signal_is_hold() -> None:
@@ -158,6 +159,7 @@ def test_backtest_engine_does_not_call_executor_when_signal_is_hold() -> None:
     assert result.win_rate == 0.0
     assert result.max_win_streak == 0
     assert result.max_loss_streak == 0
+    assert result.max_drawdown == 0.0
 
 
 def test_backtest_engine_trade_logger_receives_expected_trade_log() -> None:
@@ -226,6 +228,7 @@ def test_backtest_engine_skips_strategy_warmup_errors() -> None:
     assert strategy.calls == [1, 2, 3, 4]
     assert len(executor.called_orders) == 2
     assert result.total_trades == 2
+    assert result.max_drawdown == 0.0
 
 
 def test_backtest_engine_calculates_loss_and_loss_streaks() -> None:
@@ -265,6 +268,7 @@ def test_backtest_engine_calculates_loss_and_loss_streaks() -> None:
     assert result.win_rate == 0.0
     assert result.max_win_streak == 0
     assert result.max_loss_streak == 2
+    assert result.max_drawdown == 2.0
 
 
 def test_backtest_engine_ignores_open_position_at_the_end() -> None:
@@ -304,6 +308,46 @@ def test_backtest_engine_ignores_open_position_at_the_end() -> None:
     assert result.win_rate == 0.0
     assert result.max_win_streak == 0
     assert result.max_loss_streak == 0
+    assert result.max_drawdown == 0.0
+
+
+def test_backtest_engine_calculates_max_drawdown() -> None:
+    strategy = SequenceStrategy(
+        signals=[
+            SignalType.BUY,
+            SignalType.SELL,
+            SignalType.BUY,
+            SignalType.SELL,
+            SignalType.BUY,
+            SignalType.SELL,
+        ]
+    )
+    executor = DummyExecutor()
+    engine = BacktestEngine(
+        config=BacktestConfig(symbol="1306.T", strategy_name="trend", quantity=100),
+        strategy=strategy,
+        executor=executor,
+    )
+    market_data = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                [
+                    "2026-01-05 09:00:00",
+                    "2026-01-06 09:00:00",
+                    "2026-01-07 09:00:00",
+                    "2026-01-08 09:00:00",
+                    "2026-01-09 09:00:00",
+                    "2026-01-10 09:00:00",
+                ]
+            ),
+            "close": [100.0, 102.0, 101.0, 100.0, 99.0, 96.0],
+        }
+    )
+
+    result = engine.run(market_data=market_data)
+
+    assert result.total_pnl == -2.0
+    assert result.max_drawdown == 4.0
 
 
 def test_backtest_engine_raises_when_market_data_is_empty() -> None:

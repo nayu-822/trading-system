@@ -144,6 +144,7 @@ def format_backtest_result(
         f"win_rate: {result.win_rate}",
         f"max_win_streak: {result.max_win_streak}",
         f"max_loss_streak: {result.max_loss_streak}",
+        f"max_drawdown: {result.max_drawdown}",
     ]
     return "\n".join(lines) + "\n"
 

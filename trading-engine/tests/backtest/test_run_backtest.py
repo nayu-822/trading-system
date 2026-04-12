@@ -84,6 +84,7 @@ class DummyBacktestEngine:
             win_rate=0.0,
             max_win_streak=0,
             max_loss_streak=0,
+            max_drawdown=0.0,
         )
 
 
@@ -183,6 +184,7 @@ def test_main_writes_result_to_stdout(monkeypatch: pytest.MonkeyPatch, capsys: p
             win_rate=0.5,
             max_win_streak=1,
             max_loss_streak=1,
+            max_drawdown=2.0,
         ),
     )
 
@@ -192,6 +194,7 @@ def test_main_writes_result_to_stdout(monkeypatch: pytest.MonkeyPatch, capsys: p
     assert result == 0
     assert "symbol: 1306.T" in captured.out
     assert "total_trades: 3" in captured.out
+    assert "max_drawdown: 2.0" in captured.out
 
 
 def test_parse_args_accepts_quantity() -> None:
