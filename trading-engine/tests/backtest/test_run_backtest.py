@@ -13,6 +13,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 import app.backtest.run_backtest as run_backtest_module
 from app.backtest.backtest_engine import BacktestResult
+from app.optimization.parameter_optimizer import OptimizationResult, RankedOptimizationResult
 from app.strategies.range.range_strategy import RangeStrategy
 
 
@@ -303,3 +304,155 @@ def test_parse_args_accepts_range_parameters() -> None:
     assert args.rsi_period == 10
     assert args.rsi_lower == 25.0
     assert args.rsi_upper == 75.0
+
+
+def test_parse_args_accepts_compare_flag() -> None:
+    args = run_backtest_module.parse_args(["--compare"])
+
+    assert args.compare is True
+
+
+def test_parse_args_accepts_optimize_flag() -> None:
+    args = run_backtest_module.parse_args(["--optimize"])
+
+    assert args.optimize is True
+
+
+def test_run_comparison_backtest_executes_both_strategies_with_same_conditions(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = DummyProvider()
+    created_strategies: list[str] = []
+    captured_engine_arguments: list[dict[str, object]] = []
+
+    def create_dummy_strategy(strategy_name: str, **kwargs: object) -> DummyStrategy:
+        created_strategies.append(strategy_name)
+        return DummyStrategy()
+
+    def create_dummy_backtest_engine(**kwargs) -> DummyBacktestEngine:
+        captured_engine_arguments.append(kwargs)
+        return DummyBacktestEngine(**kwargs)
+
+    monkeypatch.setattr(run_backtest_module, "YFinanceDataProvider", lambda: provider)
+    monkeypatch.setattr(run_backtest_module, "create_strategy", create_dummy_strategy)
+    monkeypatch.setattr(run_backtest_module, "create_executor", lambda: DummyExecutor())
+    monkeypatch.setattr(run_backtest_module, "TradeLogger", DummyTradeLogger)
+    monkeypatch.setattr(run_backtest_module, "BacktestEngine", create_dummy_backtest_engine)
+
+    results = run_backtest_module.run_comparison_backtest(
+        symbol="1306.T",
+        period="1y",
+        interval="1d",
+        quantity=250,
+        trade_log_path=Path(".tmp/comparison-test.csv"),
+        rsi_period=10,
+        rsi_lower=25.0,
+        rsi_upper=75.0,
+    )
+
+    assert provider.called_with == ("1306.T", "1y", "1d")
+    assert created_strategies == ["trend", "range"]
+    assert set(results.keys()) == {"trend", "range"}
+    assert captured_engine_arguments[0]["config"].quantity == 250
+    assert captured_engine_arguments[1]["config"].quantity == 250
+    assert captured_engine_arguments[0]["config"].symbol == "1306.T"
+    assert captured_engine_arguments[1]["config"].symbol == "1306.T"
+
+
+def test_format_comparison_result_contains_both_strategy_results() -> None:
+    result = BacktestResult(
+        trades=[],
+        total_trades=3,
+        buy_count=2,
+        sell_count=1,
+        total_pnl=10.0,
+        average_pnl=5.0,
+        win_rate=0.5,
+        max_win_streak=1,
+        max_loss_streak=1,
+        max_drawdown=2.0,
+    )
+
+    formatted = run_backtest_module.format_comparison_result(
+        symbol="1306.T",
+        period="1y",
+        interval="1d",
+        results={"trend": result, "range": result},
+    )
+
+    assert "Strategy Comparison:" in formatted
+    assert "trend:" in formatted
+    assert "range:" in formatted
+    assert "total_pnl: 10.0" in formatted
+    assert "max_drawdown: 2.0" in formatted
+
+
+def test_main_writes_comparison_result_to_stdout(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    comparison_result = BacktestResult(
+        trades=[],
+        total_trades=3,
+        buy_count=2,
+        sell_count=1,
+        total_pnl=10.0,
+        average_pnl=5.0,
+        win_rate=0.5,
+        max_win_streak=1,
+        max_loss_streak=1,
+        max_drawdown=2.0,
+    )
+    monkeypatch.setattr(
+        run_backtest_module,
+        "run_comparison_backtest",
+        lambda **kwargs: {"trend": comparison_result, "range": comparison_result},
+    )
+
+    result = run_backtest_module.main(["--symbol", "1306.T", "--period", "1y", "--interval", "1d", "--compare"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "Strategy Comparison:" in captured.out
+    assert "trend:" in captured.out
+    assert "range:" in captured.out
+
+
+def test_main_writes_optimization_result_to_stdout(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    ranked_result = RankedOptimizationResult(
+        parameters={"rsi_period": 14, "rsi_lower": 30.0, "rsi_upper": 70.0},
+        result=BacktestResult(
+            trades=[],
+            total_trades=3,
+            buy_count=2,
+            sell_count=1,
+            total_pnl=10.0,
+            average_pnl=5.0,
+            win_rate=0.5,
+            max_win_streak=1,
+            max_loss_streak=1,
+            max_drawdown=2.0,
+        ),
+    )
+    monkeypatch.setattr(
+        run_backtest_module,
+        "run_optimization_backtest",
+        lambda **kwargs: OptimizationResult(
+            best_parameters={"rsi_period": 14, "rsi_lower": 30.0, "rsi_upper": 70.0},
+            best_total_pnl=10.0,
+            best_win_rate=0.5,
+            best_max_drawdown=2.0,
+            ranking=[ranked_result],
+        ),
+    )
+
+    result = run_backtest_module.main(["--symbol", "1306.T", "--period", "1y", "--interval", "1d", "--optimize"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "Optimization Result:" in captured.out
+    assert "best_total_pnl: 10.0" in captured.out
+    assert "best_max_drawdown: 2.0" in captured.out
+
+
+def test_main_returns_error_when_compare_and_optimize_are_used_together(capsys: pytest.CaptureFixture[str]) -> None:
+    result = run_backtest_module.main(["--compare", "--optimize"])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "compare and optimize cannot be used together" in captured.err
