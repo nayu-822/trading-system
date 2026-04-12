@@ -9,6 +9,7 @@ from app.data.yfinance_data_provider import YFinanceDataProvider
 from app.execution.executor import Executor
 from app.execution.paper_executor import PaperExecutor
 from app.logging.trade_logger import TradeLogger
+from app.strategies.range.range_strategy import RangeStrategy
 from app.strategies.trend.trend_strategy import TrendStrategy
 
 
@@ -18,19 +19,38 @@ DEFAULT_INTERVAL = "1d"
 DEFAULT_STRATEGY = "trend"
 DEFAULT_QUANTITY = 100.0
 DEFAULT_TRADE_LOG_PATH = Path("logs/trades/backtest_trade_log.csv")
+DEFAULT_RSI_PERIOD = 14
+DEFAULT_RSI_LOWER = 30.0
+DEFAULT_RSI_UPPER = 70.0
 
 
-def create_strategy(strategy_name: str) -> Strategy:
+def create_strategy(
+    strategy_name: str,
+    *,
+    rsi_period: int = DEFAULT_RSI_PERIOD,
+    rsi_lower: float = DEFAULT_RSI_LOWER,
+    rsi_upper: float = DEFAULT_RSI_UPPER,
+) -> Strategy:
     """
     戦略名に応じたバックテスト用 strategy を生成する。
     引数:
         strategy_name: 使用する戦略名
+        rsi_period: range 戦略で利用する RSI 期間
+        rsi_lower: range 戦略で利用する RSI 下限
+        rsi_upper: range 戦略で利用する RSI 上限
 
     戻り値:
         Strategy: 戦略オブジェクト
     """
     if strategy_name == "trend":
         return TrendStrategy()
+
+    if strategy_name == "range":
+        return RangeStrategy(
+            rsi_period=rsi_period,
+            lower_threshold=rsi_lower,
+            upper_threshold=rsi_upper,
+        )
 
     raise ValueError(f"unsupported strategy: {strategy_name}")
 
@@ -55,6 +75,9 @@ def run_backtest(
     strategy_name: str,
     quantity: float = DEFAULT_QUANTITY,
     trade_log_path: Path | None = None,
+    rsi_period: int = DEFAULT_RSI_PERIOD,
+    rsi_lower: float = DEFAULT_RSI_LOWER,
+    rsi_upper: float = DEFAULT_RSI_UPPER,
 ) -> BacktestResult:
     """
     指定条件でバックテストを実行し、結果を返す。
@@ -65,6 +88,9 @@ def run_backtest(
         strategy_name: 使用する戦略名
         quantity: 売買数量
         trade_log_path: 売買ログ保存先
+        rsi_period: range 戦略で利用する RSI 期間
+        rsi_lower: range 戦略で利用する RSI 下限
+        rsi_upper: range 戦略で利用する RSI 上限
 
     戻り値:
         BacktestResult: バックテスト結果
@@ -75,7 +101,12 @@ def run_backtest(
         period=period,
         interval=interval,
     )
-    strategy = create_strategy(strategy_name=strategy_name)
+    strategy = create_strategy(
+        strategy_name=strategy_name,
+        rsi_period=rsi_period,
+        rsi_lower=rsi_lower,
+        rsi_upper=rsi_upper,
+    )
     executor = create_executor()
     trade_logger = TradeLogger(log_file_path=trade_log_path or DEFAULT_TRADE_LOG_PATH)
     engine = BacktestEngine(
@@ -104,8 +135,11 @@ def parse_args(argv: list[str] | None = None) -> Namespace:
     parser.add_argument("--symbol", default=DEFAULT_SYMBOL, help="銘柄コード。日本株は 1306.T のように .T を付けます。")
     parser.add_argument("--period", default=DEFAULT_PERIOD, help="取得期間。例: 6mo, 1y")
     parser.add_argument("--interval", default=DEFAULT_INTERVAL, help="時間足。例: 1d, 1h, 1m")
-    parser.add_argument("--strategy", default=DEFAULT_STRATEGY, help="戦略名。現在は trend をサポートします。")
+    parser.add_argument("--strategy", default=DEFAULT_STRATEGY, help="戦略名。現在は trend, range をサポートします。")
     parser.add_argument("--quantity", type=float, default=DEFAULT_QUANTITY, help="売買数量。デフォルトは 100 です。")
+    parser.add_argument("--rsi-period", type=int, default=DEFAULT_RSI_PERIOD, help="range 戦略で利用する RSI 期間。")
+    parser.add_argument("--rsi-lower", type=float, default=DEFAULT_RSI_LOWER, help="range 戦略で利用する RSI 下限。")
+    parser.add_argument("--rsi-upper", type=float, default=DEFAULT_RSI_UPPER, help="range 戦略で利用する RSI 上限。")
     parser.add_argument(
         "--trade-log-path",
         default=str(DEFAULT_TRADE_LOG_PATH),
@@ -168,6 +202,9 @@ def main(argv: list[str] | None = None) -> int:
             strategy_name=args.strategy,
             quantity=args.quantity,
             trade_log_path=Path(args.trade_log_path),
+            rsi_period=args.rsi_period,
+            rsi_lower=args.rsi_lower,
+            rsi_upper=args.rsi_upper,
         )
     except Exception as exc:
         sys.stderr.write(f"backtest failed: {exc}\n")

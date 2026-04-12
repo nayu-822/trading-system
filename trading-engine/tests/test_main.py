@@ -179,6 +179,12 @@ def test_create_strategy_returns_strategy_protocol_compatible_instance() -> None
     assert hasattr(strategy, "generate_signal")
 
 
+def test_create_strategy_returns_range_strategy_instance() -> None:
+    strategy = create_strategy("range")
+
+    assert hasattr(strategy, "generate_signal")
+
+
 def test_build_engine_raises_for_unsupported_mode() -> None:
     with pytest.raises(ValueError, match="unsupported mode: invalid"):
         build_engine(

@@ -13,6 +13,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 import app.backtest.run_backtest as run_backtest_module
 from app.backtest.backtest_engine import BacktestResult
+from app.strategies.range.range_strategy import RangeStrategy
 
 
 class DummyProvider:
@@ -108,7 +109,11 @@ def test_run_backtest_builds_dependencies_and_returns_result(monkeypatch: pytest
     try:
         provider = DummyProvider()
         monkeypatch.setattr(run_backtest_module, "YFinanceDataProvider", lambda: provider)
-        monkeypatch.setattr(run_backtest_module, "create_strategy", lambda strategy_name: DummyStrategy())
+        monkeypatch.setattr(
+            run_backtest_module,
+            "create_strategy",
+            lambda strategy_name, **kwargs: DummyStrategy(),
+        )
         monkeypatch.setattr(run_backtest_module, "create_executor", lambda: DummyExecutor())
         monkeypatch.setattr(run_backtest_module, "TradeLogger", DummyTradeLogger)
 
@@ -140,8 +145,22 @@ def test_run_backtest_builds_dependencies_and_returns_result(monkeypatch: pytest
 
 
 def test_run_backtest_raises_for_unsupported_strategy() -> None:
-    with pytest.raises(ValueError, match="unsupported strategy: range"):
-        run_backtest_module.create_strategy("range")
+    with pytest.raises(ValueError, match="unsupported strategy: invalid"):
+        run_backtest_module.create_strategy("invalid")
+
+
+def test_create_strategy_returns_range_strategy_with_rsi_parameters() -> None:
+    strategy = run_backtest_module.create_strategy(
+        "range",
+        rsi_period=10,
+        rsi_lower=25.0,
+        rsi_upper=75.0,
+    )
+
+    assert isinstance(strategy, RangeStrategy)
+    assert strategy.rsi_period == 10
+    assert strategy.lower_threshold == 25.0
+    assert strategy.upper_threshold == 75.0
 
 
 def test_run_backtest_propagates_data_provider_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -201,3 +220,14 @@ def test_parse_args_accepts_quantity() -> None:
     args = run_backtest_module.parse_args(["--quantity", "250"])
 
     assert args.quantity == 250.0
+
+
+def test_parse_args_accepts_range_parameters() -> None:
+    args = run_backtest_module.parse_args(
+        ["--strategy", "range", "--rsi-period", "10", "--rsi-lower", "25", "--rsi-upper", "75"]
+    )
+
+    assert args.strategy == "range"
+    assert args.rsi_period == 10
+    assert args.rsi_lower == 25.0
+    assert args.rsi_upper == 75.0

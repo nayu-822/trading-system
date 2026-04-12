@@ -11,6 +11,7 @@ from app.data.market_data import DummyMarketDataProvider
 from app.execution.executor import Executor
 from app.execution.paper_executor import PaperExecutor
 from app.logging.trade_logger import TradeLogger
+from app.strategies.range.range_strategy import RangeStrategy
 from app.strategies.trend.trend_strategy import TrendStrategy
 
 
@@ -104,6 +105,9 @@ def create_strategy(strategy_name: str) -> Strategy:
     """
     if strategy_name == "trend":
         return TrendStrategy()
+
+    if strategy_name == "range":
+        return RangeStrategy()
 
     raise ValueError(f"unsupported strategy: {strategy_name}")
 
