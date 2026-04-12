@@ -251,7 +251,41 @@ def test_main_writes_result_to_stdout(monkeypatch: pytest.MonkeyPatch, capsys: p
     assert result == 0
     assert "symbol: 1306.T" in captured.out
     assert "total_trades: 3" in captured.out
+    assert "total_pnl: 10.0" in captured.out
+    assert "average_pnl: 5.0" in captured.out
+    assert "win_rate: 0.5" in captured.out
+    assert "max_win_streak: 1" in captured.out
+    assert "max_loss_streak: 1" in captured.out
     assert "max_drawdown: 2.0" in captured.out
+
+
+def test_main_runs_successfully_with_range_strategy(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(
+        run_backtest_module,
+        "run_backtest",
+        lambda **kwargs: BacktestResult(
+            trades=[],
+            total_trades=2,
+            buy_count=1,
+            sell_count=1,
+            total_pnl=250.0,
+            average_pnl=250.0,
+            win_rate=1.0,
+            max_win_streak=1,
+            max_loss_streak=0,
+            max_drawdown=0.0,
+        ),
+    )
+
+    result = run_backtest_module.main(
+        ["--symbol", "1306.T", "--period", "30d", "--interval", "5m", "--strategy", "range"]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "symbol: 1306.T" in captured.out
+    assert "total_trades: 2" in captured.out
+    assert "total_pnl: 250.0" in captured.out
 
 
 def test_parse_args_accepts_quantity() -> None:

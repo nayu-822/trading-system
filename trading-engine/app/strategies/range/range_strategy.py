@@ -63,16 +63,16 @@ class RangeStrategy:
 
         戻り値:
             RangeSignal: 最新 RSI と判定結果を持つシグナル情報
+
+        補足:
+            データ件数が不足している場合は、ウォームアップ中とみなして HOLD を返す
         """
         if self.price_column not in market_data.columns:
             raise ValueError(f"required column not found: {self.price_column}")
 
         minimum_rows = self.rsi_period + 1
         if len(market_data) < minimum_rows:
-            raise ValueError(
-                f"market_data must contain at least {minimum_rows} rows "
-                "to evaluate RSI"
-            )
+            return RangeSignal(signal=SignalType.HOLD, rsi=0.0)
 
         price_series = market_data[self.price_column].astype(float)
         rsi_series = self._calculate_rsi(price_series=price_series)
