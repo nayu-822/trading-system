@@ -30,6 +30,9 @@ class AppSettings:
     strategy: str = "trend"
     log_path: str | None = None
     quantity: int = 100
+    rsi_period: int = 14
+    rsi_lower: float = 30.0
+    rsi_upper: float = 70.0
 
 
 def load_settings(settings_path: Path | None = None) -> AppSettings:
@@ -52,6 +55,9 @@ def load_settings(settings_path: Path | None = None) -> AppSettings:
         strategy=str(raw_settings.get("strategy", AppSettings.strategy)),
         log_path=_to_optional_string(raw_settings.get("log_path")),
         quantity=int(raw_settings.get("quantity", AppSettings.quantity)),
+        rsi_period=int(raw_settings.get("rsi_period", AppSettings.rsi_period)),
+        rsi_lower=float(raw_settings.get("rsi_lower", AppSettings.rsi_lower)),
+        rsi_upper=float(raw_settings.get("rsi_upper", AppSettings.rsi_upper)),
     )
 
 
@@ -94,11 +100,20 @@ def create_executor(mode: str) -> Executor:
     raise ValueError(f"unsupported mode: {mode}")
 
 
-def create_strategy(strategy_name: str) -> Strategy:
+def create_strategy(
+    strategy_name: str,
+    *,
+    rsi_period: int = AppSettings.rsi_period,
+    rsi_lower: float = AppSettings.rsi_lower,
+    rsi_upper: float = AppSettings.rsi_upper,
+) -> Strategy:
     """
     戦略名に応じた strategy を生成する。
     引数:
         strategy_name: 使用する戦略名
+        rsi_period: range 戦略で利用する RSI 期間
+        rsi_lower: range 戦略で利用する RSI 下限
+        rsi_upper: range 戦略で利用する RSI 上限
 
     戻り値:
         Strategy: 戦略オブジェクト
@@ -107,7 +122,11 @@ def create_strategy(strategy_name: str) -> Strategy:
         return TrendStrategy()
 
     if strategy_name == "range":
-        return RangeStrategy()
+        return RangeStrategy(
+            rsi_period=rsi_period,
+            lower_threshold=rsi_lower,
+            upper_threshold=rsi_upper,
+        )
 
     raise ValueError(f"unsupported strategy: {strategy_name}")
 
@@ -125,7 +144,12 @@ def validate_settings(settings: AppSettings) -> None:
         raise ValueError("quantity must be greater than zero")
 
     create_executor(mode=settings.mode)
-    create_strategy(strategy_name=settings.strategy)
+    create_strategy(
+        strategy_name=settings.strategy,
+        rsi_period=settings.rsi_period,
+        rsi_lower=settings.rsi_lower,
+        rsi_upper=settings.rsi_upper,
+    )
 
 
 def build_engine(
@@ -148,6 +172,18 @@ def build_engine(
     logger_instance = system_logger or create_system_logger()
     trade_log_path = Path(settings.log_path) if settings.log_path else DEFAULT_TRADE_LOG_PATH
     trade_logger = TradeLogger(log_file_path=trade_log_path)
+    strategy = create_strategy(
+        strategy_name=settings.strategy,
+        rsi_period=settings.rsi_period,
+        rsi_lower=settings.rsi_lower,
+        rsi_upper=settings.rsi_upper,
+    )
+
+    logger_instance.info("strategy: %s", settings.strategy)
+    if settings.strategy == "range":
+        logger_instance.info("rsi_period: %s", settings.rsi_period)
+        logger_instance.info("rsi_lower: %s", settings.rsi_lower)
+        logger_instance.info("rsi_upper: %s", settings.rsi_upper)
 
     return Engine(
         config=EngineConfig(
@@ -156,7 +192,7 @@ def build_engine(
             quantity=settings.quantity,
         ),
         data_provider=DummyMarketDataProvider(),
-        strategy=create_strategy(strategy_name=settings.strategy),
+        strategy=strategy,
         executor=create_executor(mode=settings.mode),
         market_time_checker=market_time_checker or DefaultMarketTimeChecker(),
         system_logger=logger_instance,

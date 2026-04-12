@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import csv
+import io
+import logging
 import shutil
 import sys
 from uuid import uuid4
@@ -21,7 +23,9 @@ from app.main import (
     load_settings,
     main,
 )
+from app.strategies.range.range_strategy import RangeStrategy
 from app.strategies.signal import BaseSignal, SignalType
+from app.strategies.trend.trend_strategy import TrendStrategy
 
 
 class DummyBuySignal(BaseSignal):
@@ -74,11 +78,41 @@ def test_load_settings_returns_defaults_when_file_does_not_exist() -> None:
     assert settings == AppSettings()
 
 
+def test_load_settings_reads_range_parameters() -> None:
+    temp_dir = _create_workspace_temp_dir()
+
+    try:
+        settings_path = temp_dir / "settings.yaml"
+        settings_path.write_text(
+            "\n".join(
+                [
+                    "symbol: '1306'",
+                    "mode: paper",
+                    "strategy: range",
+                    "quantity: 100",
+                    "rsi_period: 10",
+                    "rsi_lower: 25",
+                    "rsi_upper: 75",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        settings = load_settings(settings_path=settings_path)
+
+        assert settings.strategy == "range"
+        assert settings.rsi_period == 10
+        assert settings.rsi_lower == 25.0
+        assert settings.rsi_upper == 75.0
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_main_runs_paper_mode_and_creates_trade_log_csv(monkeypatch: pytest.MonkeyPatch) -> None:
     temp_dir = _create_workspace_temp_dir()
 
     try:
-        monkeypatch.setattr(main_module, "create_strategy", lambda strategy_name: DummyBuyStrategy())
+        monkeypatch.setattr(main_module, "create_strategy", lambda strategy_name, **kwargs: DummyBuyStrategy())
 
         settings_path = temp_dir / "settings.yaml"
         log_file_path = temp_dir / "logs" / "trades" / "trade_log.csv"
@@ -177,12 +211,48 @@ def test_create_strategy_returns_strategy_protocol_compatible_instance() -> None
     strategy = create_strategy("trend")
 
     assert hasattr(strategy, "generate_signal")
+    assert isinstance(strategy, TrendStrategy)
 
 
 def test_create_strategy_returns_range_strategy_instance() -> None:
-    strategy = create_strategy("range")
+    strategy = create_strategy("range", rsi_period=10, rsi_lower=25.0, rsi_upper=75.0)
 
-    assert hasattr(strategy, "generate_signal")
+    assert isinstance(strategy, RangeStrategy)
+    assert strategy.rsi_period == 10
+    assert strategy.lower_threshold == 25.0
+    assert strategy.upper_threshold == 75.0
+
+
+def test_build_engine_logs_range_strategy_parameters() -> None:
+    logger = create_system_logger()
+    log_stream = io.StringIO()
+    handler = logging.StreamHandler(log_stream)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+
+    try:
+        build_engine(
+            settings=AppSettings(
+                symbol="1306",
+                mode="paper",
+                strategy="range",
+                log_path=None,
+                quantity=100,
+                rsi_period=10,
+                rsi_lower=25.0,
+                rsi_upper=75.0,
+            ),
+            system_logger=logger,
+            market_time_checker=AlwaysOpenMarketTimeChecker(),
+        )
+    finally:
+        logger.removeHandler(handler)
+
+    logged_text = log_stream.getvalue()
+    assert "strategy: range" in logged_text
+    assert "rsi_period: 10" in logged_text
+    assert "rsi_lower: 25.0" in logged_text
+    assert "rsi_upper: 75.0" in logged_text
 
 
 def test_build_engine_raises_for_unsupported_mode() -> None:
