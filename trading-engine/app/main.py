@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from app.core.engine import DefaultMarketTimeChecker, Engine, EngineConfig, MarketTimeChecker
+from app.core.engine import DefaultMarketTimeChecker, Engine, EngineConfig, MarketTimeChecker, Strategy
 from app.data.market_data import DummyMarketDataProvider
 from app.execution.executor import Executor
 from app.execution.paper_executor import PaperExecutor
@@ -15,6 +15,7 @@ from app.strategies.trend.trend_strategy import TrendStrategy
 
 
 DEFAULT_SETTINGS_PATH = Path(__file__).resolve().parent / "config" / "settings.yaml"
+DEFAULT_TRADE_LOG_PATH = Path("logs/trades/trade_log.csv")
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,7 @@ def create_system_logger() -> logging.Logger:
     """
     system_logger = logging.getLogger("trading_engine")
     system_logger.setLevel(logging.INFO)
+    system_logger.propagate = False
 
     if not system_logger.handlers:
         handler = logging.StreamHandler()
@@ -91,19 +93,35 @@ def create_executor(mode: str) -> Executor:
     raise ValueError(f"unsupported mode: {mode}")
 
 
-def create_strategy(strategy_name: str) -> TrendStrategy:
+def create_strategy(strategy_name: str) -> Strategy:
     """
     戦略名に応じた strategy を生成する。
     引数:
         strategy_name: 使用する戦略名
 
     戻り値:
-        TrendStrategy: 戦略オブジェクト
+        Strategy: 戦略オブジェクト
     """
     if strategy_name == "trend":
         return TrendStrategy()
 
     raise ValueError(f"unsupported strategy: {strategy_name}")
+
+
+def validate_settings(settings: AppSettings) -> None:
+    """
+    起動前に設定値の妥当性を検証する。
+    引数:
+        settings: 検証対象の起動設定
+
+    戻り値:
+        なし
+    """
+    if settings.quantity <= 0:
+        raise ValueError("quantity must be greater than zero")
+
+    create_executor(mode=settings.mode)
+    create_strategy(strategy_name=settings.strategy)
 
 
 def build_engine(
@@ -121,10 +139,11 @@ def build_engine(
     戻り値:
         Engine: 実行可能な engine
     """
+    validate_settings(settings=settings)
+
     logger_instance = system_logger or create_system_logger()
-    trade_logger = TradeLogger(
-        log_file_path=Path(settings.log_path) if settings.log_path else TradeLogger().log_file_path
-    )
+    trade_log_path = Path(settings.log_path) if settings.log_path else DEFAULT_TRADE_LOG_PATH
+    trade_logger = TradeLogger(log_file_path=trade_log_path)
 
     return Engine(
         config=EngineConfig(

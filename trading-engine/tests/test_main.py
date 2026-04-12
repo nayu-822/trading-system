@@ -12,7 +12,15 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import app.main as main_module
-from app.main import AppSettings, build_engine, load_settings, main
+from app.main import (
+    DEFAULT_TRADE_LOG_PATH,
+    AppSettings,
+    build_engine,
+    create_strategy,
+    create_system_logger,
+    load_settings,
+    main,
+)
 from app.strategies.signal import BaseSignal, SignalType
 
 
@@ -136,3 +144,64 @@ def test_build_engine_uses_log_path_from_settings() -> None:
         assert engine.trade_logger.log_file_path == log_file_path  # type: ignore[attr-defined]
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_build_engine_uses_default_trade_log_path_when_log_path_is_not_set() -> None:
+    engine = build_engine(
+        settings=AppSettings(
+            symbol="1306",
+            mode="paper",
+            strategy="trend",
+            log_path=None,
+            quantity=100,
+        ),
+        market_time_checker=AlwaysOpenMarketTimeChecker(),
+    )
+
+    assert engine.trade_logger is not None
+    assert engine.trade_logger.log_file_path == DEFAULT_TRADE_LOG_PATH  # type: ignore[attr-defined]
+
+
+def test_create_system_logger_does_not_add_duplicate_handlers() -> None:
+    logger_first = create_system_logger()
+    handler_count = len(logger_first.handlers)
+
+    logger_second = create_system_logger()
+
+    assert logger_second is logger_first
+    assert logger_second.propagate is False
+    assert len(logger_second.handlers) == handler_count
+
+
+def test_create_strategy_returns_strategy_protocol_compatible_instance() -> None:
+    strategy = create_strategy("trend")
+
+    assert hasattr(strategy, "generate_signal")
+
+
+def test_build_engine_raises_for_unsupported_mode() -> None:
+    with pytest.raises(ValueError, match="unsupported mode: invalid"):
+        build_engine(
+            settings=AppSettings(
+                symbol="1306",
+                mode="invalid",
+                strategy="trend",
+                log_path=None,
+                quantity=100,
+            ),
+            market_time_checker=AlwaysOpenMarketTimeChecker(),
+        )
+
+
+def test_build_engine_raises_for_unsupported_strategy() -> None:
+    with pytest.raises(ValueError, match="unsupported strategy: invalid"):
+        build_engine(
+            settings=AppSettings(
+                symbol="1306",
+                mode="paper",
+                strategy="invalid",
+                log_path=None,
+                quantity=100,
+            ),
+            market_time_checker=AlwaysOpenMarketTimeChecker(),
+        )
