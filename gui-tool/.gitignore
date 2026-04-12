@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Nuxt outputs
+.nuxt/
+.output/
+.nitro/
+.cache/
+
+# Build artifacts
+dist/
+coverage/
+
+# Local environment
+.env
+.env.*
+
+# Runtime data
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/*.csv
