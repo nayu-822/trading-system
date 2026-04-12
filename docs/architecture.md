@@ -70,9 +70,19 @@ producer → queue → consumer → Discord
 - ログ可視化
 - パフォーマンス分析
 
+### 実行前提
+- Windows ローカルPC上で動作
+- Nuxt ベースのローカル Web UI として起動する
+- ブラウザから HTML 画面として参照する
+
 ### データ
 - CSV
 - SQLite
+
+### 特徴
+- 売買ロジックを直接操作しない
+- 表示と集計を主目的とする
+- Node.js 実行環境は Volta でバージョン固定する
 
 ---
 
@@ -103,6 +113,7 @@ paper / live 切替
 - 戦略追加
 - DB変更
 - API差し替え
+- GUI 表示項目追加
 
 ---
 

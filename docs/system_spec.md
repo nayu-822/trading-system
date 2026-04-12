@@ -8,7 +8,7 @@
 
 1. 自動売買システム（ローカルPC上で稼働）
 2. 通知システム（Discord連携）
-3. GUI分析ツール（Windows）
+3. GUI分析ツール（ローカルWeb UI）
 
 それぞれは疎結合に設計し、独立して開発・運用可能とする。
 
@@ -99,27 +99,31 @@ notification-service/
 - フィルタリング（銘柄・期間）
 
 #### 技術スタック
-- 言語：C#
-- フレームワーク：WPF
-- アーキテクチャ：MVVM
-- .NET：8.0 以上
+- 言語：TypeScript
+- フレームワーク：Nuxt
+- UI 形態：ローカル実行の Web アプリ
+- Node.js：Volta によりバージョン固定
 
 #### 設計方針
 - GUIは売買ロジックを直接操作しない
 - データはCSVまたはSQLiteから取得する
-- View / ViewModel / Model を分離する
-- ビジネスロジックはApplication層に配置する
+- ローカルブラウザで HTML として表示する
+- 集計・表示ロジックとデータ取得処理を分離する
 
 #### ソリューション構成
 gui-tool/
-├── GuiTool.sln
-├── src/
-│   ├── GuiTool.Wpf/
-│   ├── GuiTool.Application/
-│   ├── GuiTool.Domain/
-│   └── GuiTool.Infrastructure/
+├── app/
+├── components/
+├── composables/
+├── pages/
+├── server/
+│   ├── api/
+│   └── services/
+├── public/
 ├── tests/
-│   └── GuiTool.Tests/
+├── package.json
+├── pnpm-lock.yaml
+└── nuxt.config.ts
 └── data/
 
 ---
