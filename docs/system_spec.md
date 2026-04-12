@@ -47,47 +47,11 @@
 - バックテスト機能
 
 #### フォルダ構成
-```
 trading-engine/
 ├── app/
-│   ├── main.py
-│   ├── config/
-│   │   └── settings.yaml
-│   ├── core/
-│   │   ├── engine.py
-│   │   ├── scheduler.py
-│   │   └── state_manager.py
-│   ├── strategies/
-│   │   ├── trend/
-│   │   │   └── trend_strategy.py
-│   │   └── range/
-│   │       └── range_strategy.py
-│   ├── indicators/
-│   │   └── indicators.py
-│   ├── execution/
-│   │   ├── order_executor.py
-│   │   ├── paper_executor.py
-│   │   └── live_executor.py
-│   ├── risk/
-│   │   └── risk_manager.py
-│   ├── data/
-│   │   ├── market_data.py
-│   │   └── repository.py
-│   ├── backtest/
-│   │   └── backtest_engine.py
-│   ├── optimization/
-│   │   └── parameter_optimizer.py
-│   ├── logging/
-│   │   ├── trade_logger.py
-│   │   └── system_logger.py
-│   └── utils/
-│       └── time_utils.py
 ├── logs/
-│   ├── trades/
-│   └── system/
 ├── tests/
 └── requirements.txt
-```
 
 ---
 
@@ -107,21 +71,10 @@ trading-engine/
   - 日次・月次サマリー
 
 #### フォルダ構成
-```
 notification-service/
 ├── app/
-│   ├── main.py
-│   ├── client/
-│   │   └── discord_client.py
-│   ├── queue/
-│   │   └── message_queue.py
-│   ├── handlers/
-│   │   └── notification_handler.py
-│   └── models/
-│       └── message.py
 ├── logs/
 └── requirements.txt
-```
 
 ---
 
@@ -139,28 +92,29 @@ notification-service/
 - 戦略別パフォーマンス表示
 - フィルタリング（銘柄・期間）
 
-#### 技術候補
-- Streamlit
-- PyQt（将来的）
+#### 技術スタック
+- 言語：C#
+- フレームワーク：WPF
+- アーキテクチャ：MVVM
+- .NET：8.0 以上
 
-#### フォルダ構成
-```
+#### 設計方針
+- GUIは売買ロジックを直接操作しない
+- データはCSVまたはSQLiteから取得する
+- View / ViewModel / Model を分離する
+- ビジネスロジックはApplication層に配置する
+
+#### ソリューション構成
 gui-tool/
-├── app/
-│   ├── main.py
-│   ├── ui/
-│   │   ├── dashboard.py
-│   │   └── components.py
-│   ├── services/
-│   │   └── data_loader.py
-│   ├── analytics/
-│   │   ├── performance.py
-│   │   └── metrics.py
-│   └── models/
-│       └── trade.py
-├── data/
-└── requirements.txt
-```
+├── GuiTool.sln
+├── src/
+│   ├── GuiTool.Wpf/
+│   ├── GuiTool.Application/
+│   ├── GuiTool.Domain/
+│   └── GuiTool.Infrastructure/
+├── tests/
+│   └── GuiTool.Tests/
+└── data/
 
 ---
 
@@ -183,7 +137,6 @@ gui-tool/
 ---
 
 ## 5. モード切替
-
 - paper（ペーパートレード）
 - live（実売買）
 - 設定ファイル（settings.yaml）で管理
