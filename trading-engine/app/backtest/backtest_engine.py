@@ -60,6 +60,11 @@ class BacktestResult:
     total_trades: int
     buy_count: int
     sell_count: int
+    total_pnl: float
+    average_pnl: float
+    win_rate: float
+    max_win_streak: int
+    max_loss_streak: int
 
 
 @dataclass
@@ -88,12 +93,25 @@ class BacktestEngine:
         trades: list[TradeLog] = []
         buy_count = 0
         sell_count = 0
+        current_position: str | None = None
+        entry_price: float | None = None
+        realized_pnls: list[float] = []
+        current_win_streak = 0
+        current_loss_streak = 0
+        max_win_streak = 0
+        max_loss_streak = 0
 
         for current_index in range(1, len(sorted_market_data) + 1):
             current_market_data = sorted_market_data.iloc[:current_index].copy()
             signal = self.strategy.generate_signal(market_data=current_market_data)
 
             if signal.signal == SignalType.HOLD:
+                continue
+
+            if signal.signal == SignalType.BUY and current_position is not None:
+                continue
+
+            if signal.signal == SignalType.SELL and current_position is None:
                 continue
 
             order = self._build_order(
@@ -113,14 +131,40 @@ class BacktestEngine:
 
             if order.side == "buy":
                 buy_count += 1
+                current_position = "buy"
+                entry_price = execution_result.executed_price
             else:
                 sell_count += 1
+                pnl = self._calculate_pnl(
+                    entry_price=entry_price,
+                    exit_price=execution_result.executed_price,
+                )
+                realized_pnls.append(pnl)
+                (
+                    current_win_streak,
+                    current_loss_streak,
+                    max_win_streak,
+                    max_loss_streak,
+                ) = self._update_streaks(
+                    pnl=pnl,
+                    current_win_streak=current_win_streak,
+                    current_loss_streak=current_loss_streak,
+                    max_win_streak=max_win_streak,
+                    max_loss_streak=max_loss_streak,
+                )
+                current_position = None
+                entry_price = None
 
         return BacktestResult(
             trades=trades,
             total_trades=len(trades),
             buy_count=buy_count,
             sell_count=sell_count,
+            total_pnl=sum(realized_pnls),
+            average_pnl=(sum(realized_pnls) / len(realized_pnls)) if realized_pnls else 0.0,
+            win_rate=(self._count_wins(realized_pnls) / len(realized_pnls)) if realized_pnls else 0.0,
+            max_win_streak=max_win_streak,
+            max_loss_streak=max_loss_streak,
         )
 
     def _validate_market_data(self, market_data: pd.DataFrame) -> None:
@@ -197,3 +241,63 @@ class BacktestEngine:
             message=execution_result.message,
             strategy=self.config.strategy_name,
         )
+
+    def _calculate_pnl(self, entry_price: float | None, exit_price: float) -> float:
+        """
+        エントリー価格と決済価格から実現損益を計算する。
+        引数:
+            entry_price: エントリー価格
+            exit_price: 決済価格
+
+        戻り値:
+            float: 実現損益
+        """
+        if entry_price is None:
+            raise ValueError("entry_price is required to calculate pnl")
+
+        return exit_price - entry_price
+
+    def _update_streaks(
+        self,
+        pnl: float,
+        current_win_streak: int,
+        current_loss_streak: int,
+        max_win_streak: int,
+        max_loss_streak: int,
+    ) -> tuple[int, int, int, int]:
+        """
+        損益に応じて連勝・連敗回数を更新する。
+        引数:
+            pnl: 今回トレードの損益
+            current_win_streak: 現在の連勝数
+            current_loss_streak: 現在の連敗数
+            max_win_streak: 最大連勝数
+            max_loss_streak: 最大連敗数
+
+        戻り値:
+            tuple[int, int, int, int]: 更新後の連勝・連敗状態
+        """
+        if pnl > 0:
+            current_win_streak += 1
+            current_loss_streak = 0
+            max_win_streak = max(max_win_streak, current_win_streak)
+        elif pnl < 0:
+            current_loss_streak += 1
+            current_win_streak = 0
+            max_loss_streak = max(max_loss_streak, current_loss_streak)
+        else:
+            current_win_streak = 0
+            current_loss_streak = 0
+
+        return current_win_streak, current_loss_streak, max_win_streak, max_loss_streak
+
+    def _count_wins(self, realized_pnls: list[float]) -> int:
+        """
+        実現損益のうち勝ちトレード数を数える。
+        引数:
+            realized_pnls: 実現損益の一覧
+
+        戻り値:
+            int: 勝ちトレード数
+        """
+        return sum(1 for pnl in realized_pnls if pnl > 0)
