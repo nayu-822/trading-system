@@ -103,7 +103,12 @@ class BacktestEngine:
 
         for current_index in range(1, len(sorted_market_data) + 1):
             current_market_data = sorted_market_data.iloc[:current_index].copy()
-            signal = self.strategy.generate_signal(market_data=current_market_data)
+            try:
+                signal = self.strategy.generate_signal(market_data=current_market_data)
+            except ValueError as exc:
+                if self._is_strategy_warmup_error(message=str(exc)):
+                    continue
+                raise
 
             if signal.signal == SignalType.HOLD:
                 continue
@@ -176,6 +181,9 @@ class BacktestEngine:
         戻り値:
             なし
         """
+        if market_data.empty:
+            raise ValueError("market_data must not be empty")
+
         required_columns = {"timestamp", self.config.price_column}
         missing_columns = [column for column in required_columns if column not in market_data.columns]
         if missing_columns:
@@ -301,3 +309,14 @@ class BacktestEngine:
             int: 勝ちトレード数
         """
         return sum(1 for pnl in realized_pnls if pnl > 0)
+
+    def _is_strategy_warmup_error(self, message: str) -> bool:
+        """
+        戦略のウォームアップ不足による例外かどうかを判定する。
+        引数:
+            message: 例外メッセージ
+
+        戻り値:
+            bool: ウォームアップ不足由来なら True
+        """
+        return message.startswith("market_data must contain at least ")

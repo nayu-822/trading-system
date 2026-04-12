@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 import pandas as pd
+import pytest
 
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -186,6 +187,47 @@ def test_backtest_engine_trade_logger_receives_expected_trade_log() -> None:
     assert trade_logger.logs[0].strategy == "trend"
 
 
+def test_backtest_engine_skips_strategy_warmup_errors() -> None:
+    class WarmupStrategy:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        def generate_signal(self, market_data: pd.DataFrame) -> DummySignal:
+            self.calls.append(len(market_data))
+            if len(market_data) < 3:
+                raise ValueError("market_data must contain at least 3 rows to evaluate a moving average crossover")
+            if len(market_data) == 3:
+                return DummySignal(signal=SignalType.BUY)
+            return DummySignal(signal=SignalType.SELL)
+
+    strategy = WarmupStrategy()
+    executor = DummyExecutor()
+    engine = BacktestEngine(
+        config=BacktestConfig(symbol="7203.T", strategy_name="trend", quantity=100),
+        strategy=strategy,
+        executor=executor,
+    )
+    market_data = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                [
+                    "2026-01-05 09:00:00",
+                    "2026-01-06 09:00:00",
+                    "2026-01-07 09:00:00",
+                    "2026-01-08 09:00:00",
+                ]
+            ),
+            "close": [100.0, 101.0, 102.0, 103.0],
+        }
+    )
+
+    result = engine.run(market_data=market_data)
+
+    assert strategy.calls == [1, 2, 3, 4]
+    assert len(executor.called_orders) == 2
+    assert result.total_trades == 2
+
+
 def test_backtest_engine_calculates_loss_and_loss_streaks() -> None:
     strategy = SequenceStrategy(
         signals=[
@@ -262,3 +304,14 @@ def test_backtest_engine_ignores_open_position_at_the_end() -> None:
     assert result.win_rate == 0.0
     assert result.max_win_streak == 0
     assert result.max_loss_streak == 0
+
+
+def test_backtest_engine_raises_when_market_data_is_empty() -> None:
+    engine = BacktestEngine(
+        config=BacktestConfig(symbol="1306.T", strategy_name="trend", quantity=100),
+        strategy=SequenceStrategy(signals=[]),
+        executor=DummyExecutor(),
+    )
+
+    with pytest.raises(ValueError, match="market_data must not be empty"):
+        engine.run(market_data=pd.DataFrame(columns=["timestamp", "close"]))

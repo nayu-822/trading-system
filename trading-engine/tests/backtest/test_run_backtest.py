@@ -124,6 +124,7 @@ def test_run_backtest_builds_dependencies_and_returns_result(monkeypatch: pytest
             period="6mo",
             interval="1d",
             strategy_name="trend",
+            quantity=250,
             trade_log_path=temp_dir / "trade_log.csv",
         )
 
@@ -131,6 +132,7 @@ def test_run_backtest_builds_dependencies_and_returns_result(monkeypatch: pytest
         assert result.total_trades == 1
         assert captured_engine_arguments["config"].symbol == "7203.T"
         assert captured_engine_arguments["config"].strategy_name == "trend"
+        assert captured_engine_arguments["config"].quantity == 250
         assert captured_engine_arguments["trade_logger"].log_file_path == temp_dir / "trade_log.csv"
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -190,3 +192,9 @@ def test_main_writes_result_to_stdout(monkeypatch: pytest.MonkeyPatch, capsys: p
     assert result == 0
     assert "symbol: 1306.T" in captured.out
     assert "total_trades: 3" in captured.out
+
+
+def test_parse_args_accepts_quantity() -> None:
+    args = run_backtest_module.parse_args(["--quantity", "250"])
+
+    assert args.quantity == 250.0

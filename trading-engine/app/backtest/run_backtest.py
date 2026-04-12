@@ -16,6 +16,7 @@ DEFAULT_SYMBOL = "7203.T"
 DEFAULT_PERIOD = "6mo"
 DEFAULT_INTERVAL = "1d"
 DEFAULT_STRATEGY = "trend"
+DEFAULT_QUANTITY = 100.0
 DEFAULT_TRADE_LOG_PATH = Path("logs/trades/backtest_trade_log.csv")
 
 
@@ -52,6 +53,7 @@ def run_backtest(
     period: str,
     interval: str,
     strategy_name: str,
+    quantity: float = DEFAULT_QUANTITY,
     trade_log_path: Path | None = None,
 ) -> BacktestResult:
     """
@@ -61,6 +63,7 @@ def run_backtest(
         period: 取得期間
         interval: 足種別
         strategy_name: 使用する戦略名
+        quantity: 売買数量
         trade_log_path: 売買ログ保存先
 
     戻り値:
@@ -79,7 +82,7 @@ def run_backtest(
         config=BacktestConfig(
             symbol=symbol,
             strategy_name=strategy_name,
-            quantity=100,
+            quantity=quantity,
         ),
         strategy=strategy,
         executor=executor,
@@ -102,6 +105,7 @@ def parse_args(argv: list[str] | None = None) -> Namespace:
     parser.add_argument("--period", default=DEFAULT_PERIOD, help="取得期間。例: 6mo, 1y")
     parser.add_argument("--interval", default=DEFAULT_INTERVAL, help="時間足。例: 1d, 1h, 1m")
     parser.add_argument("--strategy", default=DEFAULT_STRATEGY, help="戦略名。現在は trend をサポートします。")
+    parser.add_argument("--quantity", type=float, default=DEFAULT_QUANTITY, help="売買数量。デフォルトは 100 です。")
     parser.add_argument(
         "--trade-log-path",
         default=str(DEFAULT_TRADE_LOG_PATH),
@@ -161,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
             period=args.period,
             interval=args.interval,
             strategy_name=args.strategy,
+            quantity=args.quantity,
             trade_log_path=Path(args.trade_log_path),
         )
     except Exception as exc:
