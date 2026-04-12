@@ -2,12 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import logging
 from typing import Any
 from urllib import error, parse, request
-
-
-logger = logging.getLogger(__name__)
 
 PRODUCTION_PORT = 18080
 VERIFICATION_PORT = 18081
@@ -205,9 +201,7 @@ class KabuStationApiClient:
             dict[str, Any] | list[dict[str, Any]]: JSON デコード済みレスポンス
         """
         if require_token and not self._token:
-            message = "API token is not set"
-            logger.error(message)
-            raise ValueError(message)
+            raise ValueError("API token is not set")
 
         url = f"{self.config.base_url}{path}"
         data = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -223,7 +217,6 @@ class KabuStationApiClient:
         except error.HTTPError as exc:
             response_body = self._read_error_body(exc=exc)
             message = response_body.get("Message", str(exc))
-            logger.error("kabu api request failed: %s", message)
             raise KabuApiError(
                 message,
                 status_code=exc.code,
@@ -231,7 +224,6 @@ class KabuStationApiClient:
                 response_body=response_body,
             ) from exc
         except error.URLError as exc:
-            logger.error("kabu api connection failed: %s", exc.reason)
             raise KabuApiError(
                 f"kabu api connection failed: {exc.reason}",
                 response_body={},

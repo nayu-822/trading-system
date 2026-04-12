@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-import sys
 from pathlib import Path
+import sys
 
 import pandas as pd
 
@@ -11,7 +11,7 @@ import pandas as pd
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from app.core.engine import Engine, EngineConfig
-from app.execution.paper_executor import PaperExecutionResult, PaperOrder
+from app.execution.models import ExecutionResult, Order
 from app.strategies.signal import BaseSignal, SignalType
 
 
@@ -25,41 +25,77 @@ class DummyStrategy:
         self.signal_type = signal_type
 
     def generate_signal(self, market_data: pd.DataFrame) -> DummySignal:
+        """
+        テスト用に固定のシグナルを返す。
+        引数:
+            market_data: Engine から渡される市場データ
+
+        戻り値:
+            DummySignal: 固定のシグナル
+        """
         return DummySignal(signal=self.signal_type)
 
 
 class DummyExecutor:
     def __init__(self) -> None:
         self.called = False
-        self.received_order: PaperOrder | None = None
+        self.received_order: Order | None = None
 
-    def execute(self, order: PaperOrder) -> PaperExecutionResult:
+    def execute(self, order: Order) -> ExecutionResult:
+        """
+        注文呼び出しの有無を確認するためのダミー executor。
+        引数:
+            order: Engine が生成した注文情報
+
+        戻り値:
+            ExecutionResult: 固定の実行結果
+        """
         self.called = True
         self.received_order = order
-        return PaperExecutionResult(
-            order_id="paper-test-order",
-            symbol=order.symbol,
-            strategy=order.strategy,
-            side=order.side,
+        return ExecutionResult(
+            success=True,
+            executed_price=float(order.price or 0.0),
             quantity=order.quantity,
-            price=order.price,
-            status="filled",
-            executed_at="2026-04-12T09:00:00+00:00",
+            message="dummy execution",
         )
 
 
 class DummyDataProvider:
     def fetch(self, symbol: str) -> pd.DataFrame:
+        """
+        テスト用の市場データを返す。
+        引数:
+            symbol: 取得対象の銘柄コード
+
+        戻り値:
+            pd.DataFrame: close 列を含む市場データ
+        """
         return pd.DataFrame({"symbol": [symbol] * 3, "close": [100.0, 101.0, 102.0]})
 
 
 class ClosedMarketTimeChecker:
     def is_open(self, current_datetime: datetime | None = None) -> bool:
+        """
+        常に市場時間外として判定する。
+        引数:
+            current_datetime: 判定対象の日時
+
+        戻り値:
+            bool: 常に False
+        """
         return False
 
 
 class OpenMarketTimeChecker:
     def is_open(self, current_datetime: datetime | None = None) -> bool:
+        """
+        常に市場時間内として判定する。
+        引数:
+            current_datetime: 判定対象の日時
+
+        戻り値:
+            bool: 常に True
+        """
         return True
 
 

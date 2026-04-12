@@ -1,81 +1,68 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
+import sys
 
 import pytest
 
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from app.execution.paper_executor import PaperExecutor, PaperOrder
+from app.execution.models import Order
+from app.execution.paper_executor import PaperExecutor
 
 
-def test_execute_returns_filled_paper_result(caplog: pytest.LogCaptureFixture) -> None:
+def test_execute_returns_successful_paper_result() -> None:
     executor = PaperExecutor()
-    order = PaperOrder(
+    order = Order(
         symbol="7203",
-        strategy="trend",
         side="buy",
         quantity=100,
         price=2500.0,
     )
 
-    with caplog.at_level("INFO"):
-        result = executor.execute(order=order)
+    result = executor.execute(order=order)
 
-    assert result.status == "filled"
-    assert result.symbol == "7203"
-    assert result.strategy == "trend"
-    assert result.side == "buy"
-    assert result.quantity == 100
-    assert result.price == 2500.0
-    assert result.order_id.startswith("paper-")
-    assert "paper execution filled" in caplog.text
+    assert result.success is True
+    assert result.executed_price == 2500.0
+    assert result.quantity == 100.0
+    assert result.message == "paper execution simulated"
 
 
-def test_to_log_record_returns_dictionary() -> None:
+def test_execute_raises_when_price_is_missing() -> None:
     executor = PaperExecutor()
-    order = PaperOrder(
+    order = Order(
         symbol="6758",
-        strategy="range",
         side="sell",
         quantity=200,
-        price=3200.0,
+        price=None,
     )
 
-    result = executor.execute(order=order)
-    log_record = executor.to_log_record(execution_result=result)
-
-    assert log_record["symbol"] == "6758"
-    assert log_record["strategy"] == "range"
-    assert log_record["side"] == "sell"
-    assert log_record["status"] == "filled"
+    with pytest.raises(ValueError, match="price is required for paper execution"):
+        executor.execute(order=order)
 
 
 def test_execute_raises_when_side_is_invalid() -> None:
     executor = PaperExecutor()
-    order = PaperOrder(
+    order = Order(
         symbol="7203",
-        strategy="trend",
-        side="hold",
+        side="hold",  # type: ignore[arg-type]
         quantity=100,
         price=2500.0,
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="side must be either 'buy' or 'sell'"):
         executor.execute(order=order)
 
 
 def test_execute_raises_when_quantity_is_invalid() -> None:
     executor = PaperExecutor()
-    order = PaperOrder(
+    order = Order(
         symbol="7203",
-        strategy="trend",
         side="buy",
         quantity=0,
         price=2500.0,
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="quantity must be greater than zero"):
         executor.execute(order=order)
