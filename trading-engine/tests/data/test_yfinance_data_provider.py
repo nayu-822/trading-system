@@ -48,7 +48,7 @@ def test_yfinance_data_provider_returns_normalized_dataframe(monkeypatch) -> Non
 
     market_data = provider.fetch(symbol="7203.T", period="1y", interval="1d")
 
-    assert list(market_data.columns) == ["timestamp", "symbol", "open", "high", "low", "close", "volume"]
+    assert list(market_data.columns) == ["timestamp", "open", "high", "low", "close", "volume", "symbol"]
     assert pd.api.types.is_datetime64_any_dtype(market_data["timestamp"])
     assert set(market_data["symbol"]) == {"7203.T"}
     assert download_calls == [
@@ -89,4 +89,4 @@ def test_yfinance_data_provider_drops_missing_rows_and_keeps_valid_rows(monkeypa
 
     assert len(market_data) == 1
     assert market_data.loc[0, "symbol"] == "6758.T"
-    assert list(market_data.columns) == ["timestamp", "symbol", "open", "high", "low", "close", "volume"]
+    assert list(market_data.columns) == ["timestamp", "open", "high", "low", "close", "volume", "symbol"]

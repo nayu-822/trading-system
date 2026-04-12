@@ -165,6 +165,7 @@ class BacktestEngine:
                 pnl = self._calculate_pnl(
                     entry_price=entry_price,
                     exit_price=execution_result.executed_price,
+                    quantity=execution_result.quantity,
                 )
                 realized_pnls.append(pnl)
                 (
@@ -273,12 +274,13 @@ class BacktestEngine:
             strategy=self.config.strategy_name,
         )
 
-    def _calculate_pnl(self, entry_price: float | None, exit_price: float) -> float:
+    def _calculate_pnl(self, entry_price: float | None, exit_price: float, quantity: float) -> float:
         """
         エントリー価格と決済価格から実現損益を計算する。
         引数:
             entry_price: エントリー価格
             exit_price: 決済価格
+            quantity: 売買数量
 
         戻り値:
             float: 実現損益
@@ -286,7 +288,7 @@ class BacktestEngine:
         if entry_price is None:
             raise ValueError("entry_price is required to calculate pnl")
 
-        return exit_price - entry_price
+        return (exit_price - entry_price) * quantity
 
     def _update_streaks(
         self,

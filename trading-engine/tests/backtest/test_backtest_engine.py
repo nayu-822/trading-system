@@ -119,8 +119,8 @@ def test_backtest_engine_processes_market_data_sequentially() -> None:
     assert result.total_trades == 2
     assert result.buy_count == 1
     assert result.sell_count == 1
-    assert result.total_pnl == 1.0
-    assert result.average_pnl == 1.0
+    assert result.total_pnl == 100.0
+    assert result.average_pnl == 100.0
     assert result.win_rate == 1.0
     assert result.max_win_streak == 1
     assert result.max_loss_streak == 0
@@ -263,12 +263,12 @@ def test_backtest_engine_calculates_loss_and_loss_streaks() -> None:
     result = engine.run(market_data=market_data)
 
     assert result.total_trades == 4
-    assert result.total_pnl == -2.0
-    assert result.average_pnl == -1.0
+    assert result.total_pnl == -200.0
+    assert result.average_pnl == -100.0
     assert result.win_rate == 0.0
     assert result.max_win_streak == 0
     assert result.max_loss_streak == 2
-    assert result.max_drawdown == 2.0
+    assert result.max_drawdown == 200.0
 
 
 def test_backtest_engine_ignores_open_position_at_the_end() -> None:
@@ -346,8 +346,39 @@ def test_backtest_engine_calculates_max_drawdown() -> None:
 
     result = engine.run(market_data=market_data)
 
-    assert result.total_pnl == -2.0
-    assert result.max_drawdown == 4.0
+    assert result.total_pnl == -200.0
+    assert result.max_drawdown == 400.0
+
+
+def test_backtest_engine_reflects_quantity_in_pnl() -> None:
+    strategy = SequenceStrategy(
+        signals=[
+            SignalType.BUY,
+            SignalType.SELL,
+        ]
+    )
+    executor = DummyExecutor()
+    engine = BacktestEngine(
+        config=BacktestConfig(symbol="1306.T", strategy_name="trend", quantity=250),
+        strategy=strategy,
+        executor=executor,
+    )
+    market_data = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                [
+                    "2026-01-05 09:00:00",
+                    "2026-01-06 09:00:00",
+                ]
+            ),
+            "close": [100.0, 101.0],
+        }
+    )
+
+    result = engine.run(market_data=market_data)
+
+    assert result.total_pnl == 250.0
+    assert result.average_pnl == 250.0
 
 
 def test_backtest_engine_raises_when_market_data_is_empty() -> None:
@@ -359,3 +390,25 @@ def test_backtest_engine_raises_when_market_data_is_empty() -> None:
 
     with pytest.raises(ValueError, match="market_data must not be empty"):
         engine.run(market_data=pd.DataFrame(columns=["timestamp", "close"]))
+
+
+def test_backtest_engine_raises_when_timestamp_column_is_missing() -> None:
+    engine = BacktestEngine(
+        config=BacktestConfig(symbol="1306.T", strategy_name="trend", quantity=100),
+        strategy=SequenceStrategy(signals=[]),
+        executor=DummyExecutor(),
+    )
+
+    with pytest.raises(ValueError, match="required columns are missing: timestamp"):
+        engine.run(market_data=pd.DataFrame({"close": [100.0]}))
+
+
+def test_backtest_engine_raises_when_price_column_is_missing() -> None:
+    engine = BacktestEngine(
+        config=BacktestConfig(symbol="1306.T", strategy_name="trend", quantity=100, price_column="close"),
+        strategy=SequenceStrategy(signals=[]),
+        executor=DummyExecutor(),
+    )
+
+    with pytest.raises(ValueError, match="required columns are missing: close"):
+        engine.run(market_data=pd.DataFrame({"timestamp": pd.to_datetime(["2026-01-05 09:00:00"])}))

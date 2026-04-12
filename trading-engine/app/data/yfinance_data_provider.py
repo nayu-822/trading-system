@@ -7,12 +7,12 @@ import pandas as pd
 
 REQUIRED_YFINANCE_COLUMNS: tuple[str, ...] = (
     "timestamp",
-    "symbol",
     "open",
     "high",
     "low",
     "close",
     "volume",
+    "symbol",
 )
 
 
