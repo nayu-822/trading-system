@@ -14,6 +14,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from app.core.engine import Engine, EngineConfig
 from app.domain.models import ExecutionResult, Order
+from app.logging.trade_logger import TradeLog
 from app.execution.paper_executor import PaperExecutor
 from app.strategies.signal import BaseSignal, SignalType
 
@@ -115,6 +116,24 @@ class FailingDataProvider:
         raise ValueError("symbol not found: 7203")
 
 
+class DummyTradeLogger:
+    def __init__(self) -> None:
+        self.called = False
+        self.received_log: TradeLog | None = None
+
+    def log(self, log: TradeLog) -> None:
+        """
+        Engine からの売買ログ連携を確認するためのダミー logger。
+        引数:
+            log: Engine が生成した売買ログ
+
+        戻り値:
+            なし
+        """
+        self.called = True
+        self.received_log = log
+
+
 def test_run_once_does_not_process_when_market_is_closed() -> None:
     executor = DummyExecutor()
     engine = Engine(
@@ -197,6 +216,28 @@ def test_run_once_uses_domain_order_with_paper_executor() -> None:
     assert result is not None
     assert result.success is True
     assert result.executed_price == 102.0
+
+
+def test_run_once_calls_trade_logger_after_execution() -> None:
+    trade_logger = DummyTradeLogger()
+    engine = Engine(
+        config=EngineConfig(symbol="7203", strategy_name="trend", quantity=100),
+        executor=PaperExecutor(),
+        strategy=DummyStrategy(signal_type=SignalType.BUY),
+        data_provider=DummyDataProvider(),
+        market_time_checker=OpenMarketTimeChecker(),
+        trade_logger=trade_logger,
+    )
+
+    result = engine.run_once(current_datetime=datetime(2026, 4, 12, 9, 0, 0))
+
+    assert result is not None
+    assert trade_logger.called is True
+    assert trade_logger.received_log is not None
+    assert trade_logger.received_log.symbol == "7203"
+    assert trade_logger.received_log.side == "buy"
+    assert trade_logger.received_log.price == 102.0
+    assert trade_logger.received_log.strategy == "trend"
 
 
 def test_run_once_logs_exception_when_processing_fails(caplog: pytest.LogCaptureFixture) -> None:

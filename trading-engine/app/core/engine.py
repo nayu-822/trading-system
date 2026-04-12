@@ -10,6 +10,7 @@ import pandas as pd
 from app.data.market_data import DummyMarketDataProvider
 from app.domain.models import ExecutionResult, Order
 from app.execution.executor import Executor
+from app.logging.trade_logger import TradeLog
 from app.strategies.signal import BaseSignal, SignalType
 from app.strategies.trend.trend_strategy import TrendStrategy
 
@@ -68,6 +69,23 @@ class MarketTimeChecker(Protocol):
         ...
 
 
+class TradeLogWriter(Protocol):
+    """
+    売買ログ永続化処理の共通インターフェース。
+    """
+
+    def log(self, log: TradeLog) -> None:
+        """
+        売買ログを永続化する。
+        引数:
+            log: 永続化対象の売買ログ
+
+        戻り値:
+            なし
+        """
+        ...
+
+
 @dataclass(frozen=True)
 class EngineConfig:
     symbol: str
@@ -110,6 +128,7 @@ class Engine:
         strategy: Strategy | None = None,
         data_provider: MarketDataProvider | None = None,
         market_time_checker: MarketTimeChecker | None = None,
+        trade_logger: TradeLogWriter | None = None,
         system_logger: logging.Logger | None = None,
     ) -> None:
         """
@@ -120,6 +139,7 @@ class Engine:
             strategy: シグナル生成を担当する戦略
             data_provider: 市場データ取得処理
             market_time_checker: 市場時間の判定処理
+            trade_logger: 売買ログ永続化処理
             system_logger: システムログ出力に使用する logger
 
         戻り値:
@@ -130,6 +150,7 @@ class Engine:
         self.strategy = strategy or TrendStrategy()
         self.data_provider = data_provider or DummyMarketDataProvider()
         self.market_time_checker = market_time_checker or DefaultMarketTimeChecker()
+        self.trade_logger = trade_logger
         self.system_logger = system_logger or logger
 
     def run_once(self, current_datetime: datetime | None = None) -> ExecutionResult | None:
@@ -173,6 +194,14 @@ class Engine:
             action = signal.signal.value
             order = self._build_order(market_data=market_data, signal=signal)
             execution_result = self.executor.execute(order=order)
+            if self.trade_logger is not None:
+                self.trade_logger.log(
+                    log=self._build_trade_log(
+                        order=order,
+                        execution_result=execution_result,
+                        current_datetime=current_datetime,
+                    )
+                )
             self.system_logger.info(
                 "engine executed: symbol=%s action=%s quantity=%s executed_price=%s success=%s reason=%s",
                 order.symbol,
@@ -216,4 +245,31 @@ class Engine:
             side=side,
             quantity=float(self.config.quantity),
             price=latest_price,
+        )
+
+    def _build_trade_log(
+        self,
+        order: Order,
+        execution_result: ExecutionResult,
+        current_datetime: datetime | None,
+    ) -> TradeLog:
+        """
+        注文情報と実行結果から永続化用の売買ログを組み立てる。
+        引数:
+            order: 実行した注文情報
+            execution_result: executor が返した実行結果
+            current_datetime: 実行時刻として使用する日時
+
+        戻り値:
+            TradeLog: 永続化用の売買ログ
+        """
+        return TradeLog(
+            timestamp=current_datetime or datetime.now(),
+            symbol=order.symbol,
+            side=order.side,
+            price=execution_result.executed_price,
+            quantity=execution_result.quantity,
+            success=execution_result.success,
+            message=execution_result.message,
+            strategy=self.config.strategy_name,
         )
