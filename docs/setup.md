@@ -32,7 +32,8 @@
 ### 3.1 必要ツール
 
 - Windows 11
-- Python 3.12 系
+- pyenv-win
+- Python 3.12.8
 - `pip`
 - `venv`
 - Volta
@@ -43,13 +44,39 @@
 確認コマンド:
 
 ```powershell
+pyenv --version
 python --version
 volta --version
 node --version
 pnpm --version
 ```
 
-### 3.2 Python 仮想環境の作成方法
+### 3.2 Python バージョン管理方針
+
+Python は `pyenv-win` で管理し、リポジトリルートの `.python-version` で固定する。
+
+このリポジトリで固定するバージョン:
+
+```text
+3.12.8
+```
+
+導入例:
+
+```powershell
+winget install pyenv-win.pyenv-win
+pyenv install 3.12.8
+pyenv local 3.12.8
+python --version
+```
+
+補足:
+
+- 他プロジェクトでは別の `.python-version` を置くことで切り替えできる
+- 本リポジトリでは `trading-engine` と `notification-service` で同じ Python バージョンを前提とする
+- Python のパッチバージョンを変更する場合は `.python-version` と `docs/setup.md` を同時に更新する
+
+### 3.3 Python 仮想環境の作成方法
 
 `trading-engine`:
 
@@ -69,7 +96,7 @@ python -m venv .venv
 python -m pip install --upgrade pip
 ```
 
-### 3.3 必要な依存関係のインストール方法
+### 3.4 必要な依存関係のインストール方法
 
 現時点では依存ライブラリ一覧が未確定のため、各プロジェクトに `requirements.txt` または `pyproject.toml` を追加後、以下の形式で導入する。
 
@@ -83,14 +110,14 @@ pip install -r requirements.txt
 pip install .
 ```
 
-### 3.4 kabuステーション の前提
+### 3.5 kabuステーション の前提
 
 - `kabuステーション` をローカルPCにインストールする
 - 売買実行前に `kabuステーション` を起動しておく
 - API 利用設定、API パスワード、接続先モードは証券会社の設定に従う
 - `trading-engine` は `kabuステーション` 未起動時に安全に停止できる設計とする
 
-### 3.5 環境変数の設定方法
+### 3.6 環境変数の設定方法
 
 `.env.example` が追加された場合は `.env` を作成し、以下のような情報を管理する。
 
@@ -101,7 +128,7 @@ pip install .
 
 機密情報は Git 管理しない。
 
-### 3.6 実行制御方針
+### 3.7 実行制御方針
 
 VPS の `cron` は利用しない。市場時間に合わせた起動制御は、以下のいずれかで行う。
 
@@ -185,6 +212,7 @@ gui-tool/
 Windows:
 
 ```powershell
+pyenv --version
 python --version
 python -m venv --help
 volta --version
