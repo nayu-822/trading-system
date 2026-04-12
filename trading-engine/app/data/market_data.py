@@ -2,12 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import logging
 
 import pandas as pd
 
-
-logger = logging.getLogger(__name__)
 
 REQUIRED_MARKET_DATA_COLUMNS: tuple[str, ...] = ("open", "high", "low", "close", "volume")
 
@@ -23,15 +20,37 @@ def _validate_market_data_frame(market_data: pd.DataFrame) -> None:
         なし
     """
     if market_data.empty:
-        message = "market data is empty"
-        logger.error(message)
-        raise ValueError(message)
+        raise ValueError("market data is empty")
 
     missing_columns = [column for column in REQUIRED_MARKET_DATA_COLUMNS if column not in market_data.columns]
     if missing_columns:
-        message = f"required columns are missing: {', '.join(missing_columns)}"
-        logger.error(message)
-        raise ValueError(message)
+        raise ValueError(f"required columns are missing: {', '.join(missing_columns)}")
+
+
+def _normalize_market_data_frame(market_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    市場データ DataFrame を timestamp 列の型変換と並び順整形を含めて正規化する。
+
+    引数:
+        market_data: 正規化対象の市場データ
+
+    戻り値:
+        pd.DataFrame: 正規化済みの市場データ
+    """
+    normalized_market_data = market_data.copy()
+
+    if "timestamp" in normalized_market_data.columns:
+        normalized_market_data["timestamp"] = pd.to_datetime(
+            normalized_market_data["timestamp"],
+            errors="coerce",
+        )
+        if normalized_market_data["timestamp"].isna().any():
+            raise ValueError("timestamp contains invalid datetime values")
+
+        normalized_market_data = normalized_market_data.sort_values("timestamp").reset_index(drop=True)
+        return normalized_market_data
+
+    return normalized_market_data.reset_index(drop=True)
 
 
 @dataclass(frozen=True)
@@ -50,15 +69,18 @@ class CsvMarketDataProvider:
             pd.DataFrame: 必須カラムを含む市場データ
         """
         if not self.csv_path.exists():
-            message = f"csv file not found: {self.csv_path}"
-            logger.error(message)
-            raise FileNotFoundError(message)
+            raise FileNotFoundError(f"csv file not found: {self.csv_path}")
 
         market_data = pd.read_csv(self.csv_path, encoding=self.encoding)
+        if market_data.empty:
+            raise ValueError("csv is empty")
+
         if "symbol" in market_data.columns:
             market_data = market_data[market_data["symbol"].astype(str) == symbol]
+            if market_data.empty:
+                raise ValueError(f"symbol not found in csv: {symbol}")
 
-        validated_market_data = market_data.reset_index(drop=True)
+        validated_market_data = _normalize_market_data_frame(market_data=market_data)
         _validate_market_data_frame(market_data=validated_market_data)
         return validated_market_data
 
@@ -79,14 +101,10 @@ class DummyMarketDataProvider:
             なし
         """
         if self.row_count <= 0:
-            message = "row_count must be greater than zero"
-            logger.error(message)
-            raise ValueError(message)
+            raise ValueError("row_count must be greater than zero")
 
         if self.start_price <= 0:
-            message = "start_price must be greater than zero"
-            logger.error(message)
-            raise ValueError(message)
+            raise ValueError("start_price must be greater than zero")
 
     def fetch(self, symbol: str) -> pd.DataFrame:
         """
@@ -111,5 +129,6 @@ class DummyMarketDataProvider:
                 "volume": [1000 + (index * 10) for index in base_index],
             }
         )
-        _validate_market_data_frame(market_data=market_data)
-        return market_data
+        normalized_market_data = _normalize_market_data_frame(market_data=market_data)
+        _validate_market_data_frame(market_data=normalized_market_data)
+        return normalized_market_data
