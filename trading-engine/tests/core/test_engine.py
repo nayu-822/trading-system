@@ -11,7 +11,8 @@ import pandas as pd
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from app.core.engine import Engine, EngineConfig
-from app.execution.models import ExecutionResult, Order
+from app.domain.models import ExecutionResult, Order
+from app.execution.paper_executor import PaperExecutor
 from app.strategies.signal import BaseSignal, SignalType
 
 
@@ -103,8 +104,8 @@ def test_run_once_does_not_process_when_market_is_closed() -> None:
     executor = DummyExecutor()
     engine = Engine(
         config=EngineConfig(symbol="7203", strategy_name="trend", quantity=100),
-        strategy=DummyStrategy(signal_type=SignalType.BUY),
         executor=executor,
+        strategy=DummyStrategy(signal_type=SignalType.BUY),
         data_provider=DummyDataProvider(),
         market_time_checker=ClosedMarketTimeChecker(),
     )
@@ -119,8 +120,8 @@ def test_run_once_does_not_call_executor_when_signal_is_hold() -> None:
     executor = DummyExecutor()
     engine = Engine(
         config=EngineConfig(symbol="7203", strategy_name="trend", quantity=100),
-        strategy=DummyStrategy(signal_type=SignalType.HOLD),
         executor=executor,
+        strategy=DummyStrategy(signal_type=SignalType.HOLD),
         data_provider=DummyDataProvider(),
         market_time_checker=OpenMarketTimeChecker(),
     )
@@ -135,8 +136,8 @@ def test_run_once_calls_executor_when_signal_is_buy() -> None:
     executor = DummyExecutor()
     engine = Engine(
         config=EngineConfig(symbol="7203", strategy_name="trend", quantity=100),
-        strategy=DummyStrategy(signal_type=SignalType.BUY),
         executor=executor,
+        strategy=DummyStrategy(signal_type=SignalType.BUY),
         data_provider=DummyDataProvider(),
         market_time_checker=OpenMarketTimeChecker(),
     )
@@ -153,8 +154,8 @@ def test_run_once_calls_executor_when_signal_is_sell() -> None:
     executor = DummyExecutor()
     engine = Engine(
         config=EngineConfig(symbol="7203", strategy_name="trend", quantity=100),
-        strategy=DummyStrategy(signal_type=SignalType.SELL),
         executor=executor,
+        strategy=DummyStrategy(signal_type=SignalType.SELL),
         data_provider=DummyDataProvider(),
         market_time_checker=OpenMarketTimeChecker(),
     )
@@ -165,3 +166,19 @@ def test_run_once_calls_executor_when_signal_is_sell() -> None:
     assert executor.called is True
     assert executor.received_order is not None
     assert executor.received_order.side == "sell"
+
+
+def test_run_once_uses_domain_order_with_paper_executor() -> None:
+    engine = Engine(
+        config=EngineConfig(symbol="7203", strategy_name="trend", quantity=100),
+        executor=PaperExecutor(),
+        strategy=DummyStrategy(signal_type=SignalType.BUY),
+        data_provider=DummyDataProvider(),
+        market_time_checker=OpenMarketTimeChecker(),
+    )
+
+    result = engine.run_once()
+
+    assert result is not None
+    assert result.success is True
+    assert result.executed_price == 102.0

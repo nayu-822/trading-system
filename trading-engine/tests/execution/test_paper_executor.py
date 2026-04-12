@@ -8,7 +8,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from app.execution.models import Order
+from app.domain.models import Order
 from app.execution.paper_executor import PaperExecutor
 
 

@@ -8,8 +8,8 @@ from typing import Protocol
 import pandas as pd
 
 from app.data.market_data import DummyMarketDataProvider
-from app.execution.models import ExecutionResult, Order
-from app.execution.paper_executor import PaperExecutor
+from app.domain.models import ExecutionResult, Order
+from app.execution.executor import Executor
 from app.strategies.signal import BaseSignal, SignalType
 from app.strategies.trend.trend_strategy import TrendStrategy
 
@@ -47,23 +47,6 @@ class Strategy(Protocol):
 
         戻り値:
             BaseSignal: 売買シグナル
-        """
-        ...
-
-
-class Executor(Protocol):
-    """
-    注文実行処理の共通インターフェース。
-    """
-
-    def execute(self, order: Order) -> ExecutionResult:
-        """
-        注文情報を実行し、結果を返す。
-        引数:
-            order: 実行対象の注文情報
-
-        戻り値:
-            ExecutionResult: 実行結果
         """
         ...
 
@@ -123,8 +106,8 @@ class Engine:
     def __init__(
         self,
         config: EngineConfig,
+        executor: Executor,
         strategy: Strategy | None = None,
-        executor: Executor | None = None,
         data_provider: MarketDataProvider | None = None,
         market_time_checker: MarketTimeChecker | None = None,
         system_logger: logging.Logger | None = None,
@@ -133,8 +116,8 @@ class Engine:
         売買フローに必要な依存関係を受け取って初期化する。
         引数:
             config: 売買フロー全体で使用する設定
-            strategy: シグナル生成を担当する戦略
             executor: 注文実行を担当する executor
+            strategy: シグナル生成を担当する戦略
             data_provider: 市場データ取得処理
             market_time_checker: 市場時間の判定処理
             system_logger: システムログ出力に使用する logger
@@ -143,8 +126,8 @@ class Engine:
             なし
         """
         self.config = config
+        self.executor = executor
         self.strategy = strategy or TrendStrategy()
-        self.executor = executor or PaperExecutor()
         self.data_provider = data_provider or DummyMarketDataProvider()
         self.market_time_checker = market_time_checker or DefaultMarketTimeChecker()
         self.system_logger = system_logger or logger
