@@ -243,3 +243,85 @@ pnpm --version
 - Windows タスクスケジューラと常駐方式のどちらを採用するか
 - ローカルPC障害時の再起動・復旧方針
 - GUI で採用するグラフライブラリ
+## 9. trading-engine 通常売買 runner
+
+### 9.1 エントリーポイント
+
+通常売買は `trading-engine/app/run_trading.py` から起動する。
+互換のため `trading-engine/app/main.py` も同じ runner を呼び出す。
+
+```powershell
+cd trading-engine
+python app/run_trading.py --settings app/config/settings.yaml
+```
+
+### 9.2 設定ファイル
+
+サンプルは `trading-engine/app/config/settings.yaml.example` を使う。
+秘匿値はサンプルへ直書きせず、環境変数で上書きする。
+
+主な設定項目:
+
+- `symbol`
+- `mode`
+- `strategy`
+- `quantity`
+- `system_log_path`
+- `trade_log_path`
+- `trend_short_window`
+- `trend_long_window`
+- `rsi_period`
+- `rsi_lower`
+- `rsi_upper`
+- `api_host`
+- `api_port`
+- `api_timeout_seconds`
+- `api_exchange`
+- `api_password`
+- `api_token`
+
+### 9.3 環境変数での上書き
+
+runner は設定ファイルより環境変数を優先する。
+
+- `TRADING_SYMBOL`
+- `TRADING_MODE`
+- `TRADING_STRATEGY`
+- `TRADING_QUANTITY`
+- `TRADING_SYSTEM_LOG_PATH`
+- `TRADING_TRADE_LOG_PATH`
+- `TREND_SHORT_WINDOW`
+- `TREND_LONG_WINDOW`
+- `RANGE_RSI_PERIOD`
+- `RANGE_RSI_LOWER`
+- `RANGE_RSI_UPPER`
+- `KABU_API_HOST`
+- `KABU_API_PORT`
+- `KABU_API_TIMEOUT_SECONDS`
+- `KABU_API_EXCHANGE`
+- `KABU_API_PASSWORD`
+- `KABU_API_TOKEN`
+
+### 9.4 paper / live の切替
+
+- `mode: paper`
+  `PaperExecutor` を使って通常売買フローを実行する。
+- `mode: live`
+  execution 層で `LiveExecutor` へ切り替わる。
+  現時点では API 接続設定と差し替えポイントまで実装済みで、実際の注文 payload 生成は未実装。
+
+### 9.5 安全チェック
+
+- `symbol` 未設定時は停止する
+- `quantity <= 0` の場合は停止する
+- `live` モードでは市場時間外に停止する
+- `live` モードでは `api_exchange` と `api_password` または `api_token` が必須
+- 例外は握りつぶさず system log に記録する
+
+### 9.6 ログ
+
+- system log: `system_log_path` または既定値 `logs/system/trading_runner.log`
+- trade log: `trade_log_path` または既定値 `logs/trades/trade_log.csv`
+
+runner の開始・終了・スキップ・異常終了は system log に残る。
+約定結果は trade log に CSV で残る。

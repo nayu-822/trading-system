@@ -1,0 +1,26 @@
+# trading-engine 通常売買 runner 設定サンプル
+symbol: "1306"
+mode: "paper"
+strategy: "trend"
+quantity: 100
+
+# system log と trade log は分離して出力する
+system_log_path: "logs/system/trading_runner.log"
+trade_log_path: "logs/trades/trade_log.csv"
+
+# trend strategy
+trend_short_window: 5
+trend_long_window: 25
+
+# range strategy
+rsi_period: 14
+rsi_lower: 30.0
+rsi_upper: 70.0
+
+# live mode 用
+api_host: "localhost"
+api_port: 18080
+api_timeout_seconds: 10.0
+api_exchange:
+api_password:
+api_token:
