@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.engine import DefaultMarketTimeChecker, Engine, EngineConfig, MarketTimeChecker, Strategy
-from app.data.market_data import DummyMarketDataProvider
+from app.data.market_data import CsvMarketDataProvider, DummyMarketDataProvider, YFinanceMarketDataProvider
 from app.domain.models import ExecutionResult
 from app.execution.executor import Executor
 from app.execution.live_executor import (
@@ -29,27 +29,12 @@ DEFAULT_SYSTEM_LOG_PATH = Path("logs/system/trading_runner.log")
 DEFAULT_TRADE_LOG_PATH = Path("logs/trades/trade_log.csv")
 DEFAULT_MODE = "paper"
 DEFAULT_STRATEGY = "trend"
+DEFAULT_DATA_SOURCE = "dummy"
+DEFAULT_YFINANCE_PERIOD = "5d"
+DEFAULT_YFINANCE_INTERVAL = "1m"
 SUPPORTED_MODES: tuple[str, ...] = ("paper", "live")
 SUPPORTED_STRATEGIES: tuple[str, ...] = ("trend", "range")
-
-
-@dataclass(frozen=True)
-class TrendStrategySettings:
-    short_window: int = 5
-    long_window: int = 25
-
-
-@dataclass(frozen=True)
-class RangeStrategySettings:
-    rsi_period: int = 14
-    rsi_lower: float = 30.0
-    rsi_upper: float = 70.0
-
-
-@dataclass(frozen=True)
-class LogSettings:
-    system_log_path: str | None = None
-    trade_log_path: str | None = None
+SUPPORTED_DATA_SOURCES: tuple[str, ...] = ("dummy", "csv", "yfinance")
 
 
 @dataclass(frozen=True)
@@ -68,9 +53,17 @@ class TradingSettings:
     mode: str = DEFAULT_MODE
     strategy: str = DEFAULT_STRATEGY
     quantity: int = 100
-    trend: TrendStrategySettings = TrendStrategySettings()
-    range: RangeStrategySettings = RangeStrategySettings()
-    logs: LogSettings = LogSettings()
+    data_source: str = DEFAULT_DATA_SOURCE
+    csv_path: str | None = None
+    yfinance_period: str = DEFAULT_YFINANCE_PERIOD
+    yfinance_interval: str = DEFAULT_YFINANCE_INTERVAL
+    trend_short_window: int = 5
+    trend_long_window: int = 25
+    rsi_period: int = 14
+    rsi_lower: float = 30.0
+    rsi_upper: float = 70.0
+    log_path: str | None = None
+    system_log_path: str | None = None
     api: ApiSettings = ApiSettings()
 
 
@@ -88,11 +81,11 @@ def load_settings(
     """
     設定ファイルと環境変数から通常売買設定を読み込む。
     """
-    raw_settings: dict[str, Any] = {}
     resolved_path = settings_path or DEFAULT_SETTINGS_PATH
-    if resolved_path.exists():
-        raw_settings = _load_yaml_like_settings(settings_path=resolved_path)
+    if not resolved_path.exists():
+        raise FileNotFoundError(f"settings file not found: {resolved_path}")
 
+    raw_settings = _load_yaml_like_settings(settings_path=resolved_path)
     env = environ or dict(os.environ)
 
     return TradingSettings(
@@ -100,58 +93,69 @@ def load_settings(
         mode=_read_string_setting(raw_settings, env, "mode", "TRADING_MODE", DEFAULT_MODE),
         strategy=_read_string_setting(raw_settings, env, "strategy", "TRADING_STRATEGY", DEFAULT_STRATEGY),
         quantity=_read_int_setting(raw_settings, env, "quantity", "TRADING_QUANTITY", 100),
-        trend=TrendStrategySettings(
-            short_window=_read_int_setting(
-                raw_settings,
-                env,
-                "trend_short_window",
-                "TREND_SHORT_WINDOW",
-                TrendStrategySettings.short_window,
-            ),
-            long_window=_read_int_setting(
-                raw_settings,
-                env,
-                "trend_long_window",
-                "TREND_LONG_WINDOW",
-                TrendStrategySettings.long_window,
-            ),
+        data_source=_read_string_setting(
+            raw_settings,
+            env,
+            "data_source",
+            "TRADING_DATA_SOURCE",
+            DEFAULT_DATA_SOURCE,
         ),
-        range=RangeStrategySettings(
-            rsi_period=_read_int_setting(
-                raw_settings,
-                env,
-                "rsi_period",
-                "RANGE_RSI_PERIOD",
-                RangeStrategySettings.rsi_period,
-            ),
-            rsi_lower=_read_float_setting(
-                raw_settings,
-                env,
-                "rsi_lower",
-                "RANGE_RSI_LOWER",
-                RangeStrategySettings.rsi_lower,
-            ),
-            rsi_upper=_read_float_setting(
-                raw_settings,
-                env,
-                "rsi_upper",
-                "RANGE_RSI_UPPER",
-                RangeStrategySettings.rsi_upper,
-            ),
+        csv_path=_read_optional_string_setting(raw_settings, env, "csv_path", "TRADING_CSV_PATH"),
+        yfinance_period=_read_string_setting(
+            raw_settings,
+            env,
+            "yfinance_period",
+            "TRADING_YFINANCE_PERIOD",
+            DEFAULT_YFINANCE_PERIOD,
         ),
-        logs=LogSettings(
-            system_log_path=_read_optional_string_setting(
-                raw_settings,
-                env,
-                "system_log_path",
-                "TRADING_SYSTEM_LOG_PATH",
-            ),
-            trade_log_path=_read_optional_string_setting(
-                raw_settings,
-                env,
-                "trade_log_path",
-                "TRADING_TRADE_LOG_PATH",
-            ),
+        yfinance_interval=_read_string_setting(
+            raw_settings,
+            env,
+            "yfinance_interval",
+            "TRADING_YFINANCE_INTERVAL",
+            DEFAULT_YFINANCE_INTERVAL,
+        ),
+        trend_short_window=_read_int_setting(
+            raw_settings,
+            env,
+            "trend_short_window",
+            "TREND_SHORT_WINDOW",
+            5,
+        ),
+        trend_long_window=_read_int_setting(
+            raw_settings,
+            env,
+            "trend_long_window",
+            "TREND_LONG_WINDOW",
+            25,
+        ),
+        rsi_period=_read_int_setting(
+            raw_settings,
+            env,
+            "rsi_period",
+            "RANGE_RSI_PERIOD",
+            14,
+        ),
+        rsi_lower=_read_float_setting(
+            raw_settings,
+            env,
+            "rsi_lower",
+            "RANGE_RSI_LOWER",
+            30.0,
+        ),
+        rsi_upper=_read_float_setting(
+            raw_settings,
+            env,
+            "rsi_upper",
+            "RANGE_RSI_UPPER",
+            70.0,
+        ),
+        log_path=_read_optional_string_setting(raw_settings, env, "log_path", "TRADING_TRADE_LOG_PATH"),
+        system_log_path=_read_optional_string_setting(
+            raw_settings,
+            env,
+            "system_log_path",
+            "TRADING_SYSTEM_LOG_PATH",
         ),
         api=ApiSettings(
             host=_read_string_setting(raw_settings, env, "api_host", "KABU_API_HOST", ApiSettings.host),
@@ -188,7 +192,10 @@ def create_system_logger(log_path: str | Path | None = None) -> logging.Logger:
     system_logger.setLevel(logging.INFO)
     system_logger.propagate = False
 
-    if not any(isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler) for handler in system_logger.handlers):
+    if not any(
+        isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler)
+        for handler in system_logger.handlers
+    ):
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
         system_logger.addHandler(stream_handler)
@@ -206,44 +213,61 @@ def create_system_logger(log_path: str | Path | None = None) -> logging.Logger:
 def create_strategy(
     settings: TradingSettings | str,
     *,
-    trend_short_window: int = TrendStrategySettings.short_window,
-    trend_long_window: int = TrendStrategySettings.long_window,
-    rsi_period: int = RangeStrategySettings.rsi_period,
-    rsi_lower: float = RangeStrategySettings.rsi_lower,
-    rsi_upper: float = RangeStrategySettings.rsi_upper,
+    trend_short_window: int = 5,
+    trend_long_window: int = 25,
+    rsi_period: int = 14,
+    rsi_lower: float = 30.0,
+    rsi_upper: float = 70.0,
 ) -> Strategy:
     """
-    通常売買設定に応じた strategy を生成する。
+    設定に応じた strategy を生成する。
     """
     resolved_settings = settings
     if isinstance(settings, str):
         resolved_settings = TradingSettings(
             strategy=settings,
-            trend=TrendStrategySettings(
-                short_window=trend_short_window,
-                long_window=trend_long_window,
-            ),
-            range=RangeStrategySettings(
-                rsi_period=rsi_period,
-                rsi_lower=rsi_lower,
-                rsi_upper=rsi_upper,
-            ),
+            trend_short_window=trend_short_window,
+            trend_long_window=trend_long_window,
+            rsi_period=rsi_period,
+            rsi_lower=rsi_lower,
+            rsi_upper=rsi_upper,
         )
 
     if resolved_settings.strategy == "trend":
         return TrendStrategy(
-            short_window=resolved_settings.trend.short_window,
-            long_window=resolved_settings.trend.long_window,
+            short_window=resolved_settings.trend_short_window,
+            long_window=resolved_settings.trend_long_window,
         )
 
     if resolved_settings.strategy == "range":
         return RangeStrategy(
-            rsi_period=resolved_settings.range.rsi_period,
-            lower_threshold=resolved_settings.range.rsi_lower,
-            upper_threshold=resolved_settings.range.rsi_upper,
+            rsi_period=resolved_settings.rsi_period,
+            lower_threshold=resolved_settings.rsi_lower,
+            upper_threshold=resolved_settings.rsi_upper,
         )
 
     raise ValueError(f"unsupported strategy: {resolved_settings.strategy}")
+
+
+def create_data_provider(settings: TradingSettings) -> Any:
+    """
+    設定に応じたデータ provider を生成する。
+    """
+    if settings.data_source == "dummy":
+        return DummyMarketDataProvider()
+
+    if settings.data_source == "csv":
+        if settings.csv_path is None:
+            raise ValueError("csv_path is required when data_source is csv")
+        return CsvMarketDataProvider(csv_path=Path(settings.csv_path))
+
+    if settings.data_source == "yfinance":
+        return YFinanceMarketDataProvider(
+            period=settings.yfinance_period,
+            interval=settings.yfinance_interval,
+        )
+
+    raise ValueError(f"unsupported data_source: {settings.data_source}")
 
 
 def create_executor(
@@ -252,7 +276,7 @@ def create_executor(
     live_order_sender: LiveOrderSender | None = None,
 ) -> Executor:
     """
-    通常売買設定に応じた executor を生成する。
+    設定に応じた executor を生成する。
     """
     if settings.mode == "paper":
         return PaperExecutor()
@@ -288,20 +312,26 @@ def validate_settings(
     if settings.strategy not in SUPPORTED_STRATEGIES:
         raise ValueError(f"unsupported strategy: {settings.strategy}")
 
+    if settings.data_source not in SUPPORTED_DATA_SOURCES:
+        raise ValueError(f"unsupported data_source: {settings.data_source}")
+
     if not settings.symbol.strip():
         raise ValueError("symbol is required")
 
     if settings.quantity <= 0:
         raise ValueError("quantity must be greater than zero")
 
+    if settings.log_path is not None and not settings.log_path.strip():
+        raise ValueError("log_path must not be empty")
+
+    if settings.system_log_path is not None and not settings.system_log_path.strip():
+        raise ValueError("system_log_path must not be empty")
+
     create_strategy(settings=settings)
+    create_data_provider(settings=settings)
 
     if settings.mode != "live":
         return
-
-    checker = market_time_checker or DefaultMarketTimeChecker()
-    if not checker.is_open(current_datetime=current_datetime):
-        raise ValueError("live mode requires market to be open")
 
     if not settings.api.host.strip():
         raise ValueError("api_host is required for live mode")
@@ -314,6 +344,12 @@ def validate_settings(
 
     if not settings.api.api_password and not settings.api.api_token:
         raise ValueError("api_password or api_token is required for live mode")
+
+    checker = market_time_checker or DefaultMarketTimeChecker()
+    if not checker.is_open(current_datetime=current_datetime):
+        raise ValueError("live mode requires market to be open")
+
+    raise ValueError("live mode is not supported yet")
 
 
 def build_engine(
@@ -332,13 +368,14 @@ def build_engine(
         market_time_checker=market_time_checker,
     )
 
-    logger_instance = system_logger or create_system_logger(settings.logs.system_log_path)
-    trade_log_path = Path(settings.logs.trade_log_path) if settings.logs.trade_log_path else DEFAULT_TRADE_LOG_PATH
+    logger_instance = system_logger or create_system_logger(settings.system_log_path)
+    trade_log_path = Path(settings.log_path) if settings.log_path else DEFAULT_TRADE_LOG_PATH
     logger_instance.info("strategy: %s", settings.strategy)
+    logger_instance.info("data_source: %s", settings.data_source)
     if settings.strategy == "range":
-        logger_instance.info("rsi_period: %s", settings.range.rsi_period)
-        logger_instance.info("rsi_lower: %s", settings.range.rsi_lower)
-        logger_instance.info("rsi_upper: %s", settings.range.rsi_upper)
+        logger_instance.info("rsi_period: %s", settings.rsi_period)
+        logger_instance.info("rsi_lower: %s", settings.rsi_lower)
+        logger_instance.info("rsi_upper: %s", settings.rsi_upper)
 
     return Engine(
         config=EngineConfig(
@@ -346,7 +383,7 @@ def build_engine(
             strategy_name=settings.strategy,
             quantity=settings.quantity,
         ),
-        data_provider=data_provider or DummyMarketDataProvider(),
+        data_provider=data_provider or create_data_provider(settings=settings),
         strategy=create_strategy(settings=settings),
         executor=create_executor(settings=settings, live_order_sender=live_order_sender),
         market_time_checker=market_time_checker or DefaultMarketTimeChecker(),
@@ -366,7 +403,7 @@ def run_trading(
     通常売買 runner を 1 回実行する。
     """
     settings = load_settings(settings_path=settings_path)
-    system_logger = create_system_logger(settings.logs.system_log_path)
+    system_logger = create_system_logger(settings.system_log_path)
 
     system_logger.info(
         "runner started: symbol=%s mode=%s strategy=%s quantity=%s",
@@ -462,54 +499,13 @@ def _load_yaml_like_settings(settings_path: Path) -> dict[str, Any]:
     """
     try:
         import yaml  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError("PyYAML is required to load trading settings") from exc
 
-        loaded = yaml.safe_load(settings_path.read_text(encoding="utf-8")) or {}
-        if not isinstance(loaded, dict):
-            raise ValueError("settings.yaml must contain a mapping")
-        return {str(key): value for key, value in loaded.items()}
-    except ModuleNotFoundError:
-        return _parse_simple_yaml(settings_path=settings_path)
-
-
-def _parse_simple_yaml(settings_path: Path) -> dict[str, Any]:
-    """
-    フラットな key: value 形式の設定ファイルを簡易解析する。
-    """
-    parsed_settings: dict[str, Any] = {}
-
-    for raw_line in settings_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-
-        if ":" not in line:
-            raise ValueError(f"invalid settings line: {raw_line}")
-
-        key, value = line.split(":", 1)
-        parsed_settings[key.strip()] = _parse_scalar(value.strip())
-
-    return parsed_settings
-
-
-def _parse_scalar(value: str) -> Any:
-    """
-    文字列を適切なスカラー型へ変換する。
-    """
-    if value in {"", "null", "None"}:
-        return None
-
-    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-        return value[1:-1]
-
-    if value.lower() in {"true", "false"}:
-        return value.lower() == "true"
-
-    try:
-        if "." in value:
-            return float(value)
-        return int(value)
-    except ValueError:
-        return value
+    loaded = yaml.safe_load(settings_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(loaded, dict):
+        raise ValueError("settings.yaml must contain a mapping")
+    return {str(key): value for key, value in loaded.items()}
 
 
 def _read_string_setting(

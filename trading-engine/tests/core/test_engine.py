@@ -12,7 +12,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from app.core.engine import Engine, EngineConfig
+from app.core.engine import DefaultMarketTimeChecker, Engine, EngineConfig
 from app.domain.models import ExecutionResult, Order
 from app.logging.trade_logger import TradeLog
 from app.execution.paper_executor import PaperExecutor
@@ -272,3 +272,11 @@ def test_run_once_logs_exception_when_processing_fails(caplog: pytest.LogCapture
             engine.run_once()
 
     assert "engine failed: symbol=7203 action=fetch_market_data reason=symbol not found: 7203" in caplog.text
+
+
+def test_default_market_time_checker_blocks_lunch_break() -> None:
+    checker = DefaultMarketTimeChecker()
+
+    assert checker.is_open(datetime(2026, 4, 13, 11, 0, 0)) is True
+    assert checker.is_open(datetime(2026, 4, 13, 12, 0, 0)) is False
+    assert checker.is_open(datetime(2026, 4, 13, 13, 0, 0)) is True

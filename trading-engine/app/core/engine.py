@@ -96,8 +96,10 @@ class EngineConfig:
 
 @dataclass(frozen=True)
 class DefaultMarketTimeChecker:
-    market_open_time: time = time(hour=9, minute=0)
-    market_close_time: time = time(hour=15, minute=30)
+    morning_open_time: time = time(hour=9, minute=0)
+    morning_close_time: time = time(hour=11, minute=30)
+    afternoon_open_time: time = time(hour=12, minute=30)
+    afternoon_close_time: time = time(hour=15, minute=30)
 
     def is_open(self, current_datetime: datetime | None = None) -> bool:
         """
@@ -113,7 +115,9 @@ class DefaultMarketTimeChecker:
             return False
 
         current_time = target_datetime.time()
-        return self.market_open_time <= current_time <= self.market_close_time
+        is_morning_session = self.morning_open_time <= current_time <= self.morning_close_time
+        is_afternoon_session = self.afternoon_open_time <= current_time <= self.afternoon_close_time
+        return is_morning_session or is_afternoon_session
 
 
 class Engine:

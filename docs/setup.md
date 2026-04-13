@@ -325,3 +325,79 @@ runner は設定ファイルより環境変数を優先する。
 
 runner の開始・終了・スキップ・異常終了は system log に残る。
 約定結果は trade log に CSV で残る。
+## 10. trading-engine 通常売買 runner 改訂
+
+### 10.1 実行方法
+
+```powershell
+cd trading-engine
+python app/run_trading.py --settings app/config/settings.yaml
+```
+
+### 10.2 設定ファイル
+
+既定設定は `trading-engine/app/config/settings.yaml` を使う。
+サンプルは `trading-engine/app/config/settings.yaml.example` を参照する。
+
+主な設定項目:
+
+- `symbol`
+- `mode`
+- `strategy`
+- `quantity`
+- `data_source`
+- `csv_path`
+- `yfinance_period`
+- `yfinance_interval`
+- `trend_short_window`
+- `trend_long_window`
+- `rsi_period`
+- `rsi_lower`
+- `rsi_upper`
+- `log_path`
+- `system_log_path`
+- `api_host`
+- `api_port`
+- `api_timeout_seconds`
+- `api_exchange`
+- `api_password`
+- `api_token`
+
+### 10.3 data_source
+
+- `dummy`
+  テスト用のダミー OHLCV を返す。
+- `csv`
+  `csv_path` で指定した CSV を使う。
+- `yfinance`
+  `yfinance_period` と `yfinance_interval` を使って取得する。
+
+### 10.4 市場時間判定
+
+既定の市場時間判定は日本株の場中に合わせる。
+
+- 前場: `09:00` から `11:30`
+- 昼休み: 取引不可
+- 後場: `12:30` から `15:30`
+- 土日: 停止
+
+### 10.5 paper / live
+
+- `mode: paper`
+  `PaperExecutor` を使って通常売買フローを実行する。
+- `mode: live`
+  現時点では未対応。設定検証時に明示エラーで停止する。
+
+### 10.6 ログ
+
+- system log: `system_log_path` または既定値 `logs/system/trading_runner.log`
+- trade log: `log_path` または既定値 `logs/trades/trade_log.csv`
+
+### 10.7 依存ライブラリ
+
+設定ファイルの読込には `PyYAML` が必要。
+
+```powershell
+cd trading-engine
+pip install -r requirements.txt
+```

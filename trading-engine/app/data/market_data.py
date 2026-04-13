@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from app.data.yfinance_data_provider import YFinanceDataProvider
+
 
 REQUIRED_MARKET_DATA_COLUMNS: tuple[str, ...] = ("open", "high", "low", "close", "volume")
 
@@ -128,6 +130,27 @@ class DummyMarketDataProvider:
                 "close": close_prices,
                 "volume": [1000 + (index * 10) for index in base_index],
             }
+        )
+        normalized_market_data = _normalize_market_data_frame(market_data=market_data)
+        _validate_market_data_frame(market_data=normalized_market_data)
+        return normalized_market_data
+
+
+@dataclass(frozen=True)
+class YFinanceMarketDataProvider:
+    period: str = "5d"
+    interval: str = "1m"
+    provider: YFinanceDataProvider | None = None
+
+    def fetch(self, symbol: str) -> pd.DataFrame:
+        """
+        yfinance を通常売買のデータ取得口に合わせて利用する。
+        """
+        data_provider = self.provider or YFinanceDataProvider()
+        market_data = data_provider.fetch(
+            symbol=symbol,
+            period=self.period,
+            interval=self.interval,
         )
         normalized_market_data = _normalize_market_data_frame(market_data=market_data)
         _validate_market_data_frame(market_data=normalized_market_data)
