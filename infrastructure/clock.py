@@ -17,7 +17,7 @@ class Clock(Protocol):
         """
 
 
-class SystemClock:
+class RealClock:
     """本番実行で利用する時計。"""
 
     def now(self) -> datetime:
@@ -34,7 +34,7 @@ class SystemClock:
 
 
 @dataclass(frozen=True)
-class FixedClock:
+class MockClock:
     """テストやバックテストで固定時刻を返す時計。"""
 
     fixed_datetime: datetime
@@ -50,3 +50,7 @@ class FixedClock:
         """
 
         return self.fixed_datetime
+
+
+SystemClock = RealClock
+FixedClock = MockClock

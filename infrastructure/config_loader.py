@@ -2,7 +2,16 @@ from pathlib import Path
 from typing import Any
 
 from domain.enums import RunMode
-from domain.models import AppConfig, RiskConfig, StrategyConfig, SymbolConfig, SystemConfig
+from domain.models import (
+    AppConfig,
+    RangeStrategyConfig,
+    RiskConfig,
+    StrategyConfig,
+    SymbolConfig,
+    SymbolOverrideConfig,
+    SystemConfig,
+    TrendStrategyConfig,
+)
 
 
 class ConfigLoadError(Exception):
@@ -81,8 +90,7 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
         if stripped.startswith("- "):
             if not isinstance(parent, list):
                 raise ConfigLoadError(f"リストの位置が不正です: line={line_no}")
-            item_text = stripped[2:]
-            item = _parse_list_item(item_text)
+            item = _parse_list_item(stripped[2:])
             parent.append(item)
             if isinstance(item, dict):
                 stack.append((indent, item))
@@ -102,7 +110,9 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
     return root
 
 
-def _parse_list_item(item_text: str) -> dict[str, Any] | list[Any] | str | int | float | bool | None:
+def _parse_list_item(
+    item_text: str,
+) -> dict[str, Any] | list[Any] | str | int | float | bool | None:
     if ": " in item_text or item_text.endswith(":"):
         key, value = _split_key_value(item_text, 0)
         return {key: _parse_scalar(value) if value else {}}
@@ -116,7 +126,9 @@ def _split_key_value(text: str, line_no: int) -> tuple[str, str]:
     return key.strip(), value.strip()
 
 
-def _guess_container(text: str, current_line_no: int, current_indent: int) -> dict[str, Any] | list[Any]:
+def _guess_container(
+    text: str, current_line_no: int, current_indent: int
+) -> dict[str, Any] | list[Any]:
     for raw_line in text.splitlines()[current_line_no:]:
         line = raw_line.split("#", 1)[0].rstrip()
         if not line.strip():
@@ -128,7 +140,9 @@ def _guess_container(text: str, current_line_no: int, current_indent: int) -> di
     return {}
 
 
-def _parse_scalar(value: str) -> dict[str, Any] | list[Any] | str | int | float | bool | None:
+def _parse_scalar(
+    value: str,
+) -> dict[str, Any] | list[Any] | str | int | float | bool | None:
     if value == "{}":
         return {}
     if value == "[]":
@@ -181,16 +195,35 @@ def _build_symbol_configs(data: dict[str, Any]) -> list[SymbolConfig]:
             strategy=str(item["strategy"]),
             allocation_ratio=float(item["allocation_ratio"]),
             lot_size=int(item["lot_size"]),
-            overrides=dict(item.get("overrides", {})),
+            overrides=_build_symbol_override_config(dict(item.get("overrides", {}))),
         )
         for item in symbols
     ]
 
 
+def _build_symbol_override_config(data: dict[str, Any]) -> SymbolOverrideConfig:
+    return SymbolOverrideConfig(
+        strategy=str(data["strategy"]) if data.get("strategy") is not None else None,
+        allocation_ratio=(
+            float(data["allocation_ratio"])
+            if data.get("allocation_ratio") is not None
+            else None
+        ),
+        lot_size=int(data["lot_size"]) if data.get("lot_size") is not None else None,
+    )
+
+
 def _build_strategy_config(data: dict[str, Any]) -> StrategyConfig:
+    parameters = data["parameters"]
+    trend = dict(parameters["trend"])
+    range_config = dict(parameters["range"])
     return StrategyConfig(
         default_strategy=str(data["default_strategy"]),
-        parameters=dict(data["parameters"]),
+        trend=TrendStrategyConfig(
+            short_window=int(trend["short_window"]),
+            long_window=int(trend["long_window"]),
+        ),
+        range=RangeStrategyConfig(window=int(range_config["window"])),
     )
 
 

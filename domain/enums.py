@@ -5,6 +5,7 @@ class RunMode(str, Enum):
     """実行モードを表す列挙型。"""
 
     LIVE = "live"
+    PAPER = "paper"
     MOCK = "mock"
     BACKTEST = "backtest"
 
