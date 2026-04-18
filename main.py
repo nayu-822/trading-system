@@ -53,10 +53,16 @@ def main() -> int:
         終了コード。
     """
 
-    logger = setup_logger(DEFAULT_LOG_LEVEL, process_name=EventSource.MAIN.value)
     try:
+        config = load_config(CONFIG_DIR)
+        logger = setup_logger(config.app.log_level, process_name=EventSource.MAIN.value)
         initialize_application()
-    except (ConfigLoadError, ConfigValidationError, ValueError, TypeError):
+    except ConfigLoadError:
+        # 設定読込前の障害だけは、設定値を参照できないため固定レベルを使う。
+        logger = setup_logger(DEFAULT_LOG_LEVEL, process_name=EventSource.MAIN.value)
+        logger.exception("application initialization failed")
+        return 1
+    except (ConfigValidationError, ValueError, TypeError):
         logger.exception("application initialization failed")
         return 1
     return 0
