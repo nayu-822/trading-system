@@ -1,0 +1,7 @@
+default_strategy: trend
+parameters:
+  trend:
+    short_window: 5
+    long_window: 25
+  range:
+    window: 20

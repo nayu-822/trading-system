@@ -1,0 +1,8 @@
+symbols:
+  - code: "7203"
+    name: Toyota
+    market: prime
+    strategy: trend
+    allocation_ratio: 1.0
+    lot_size: 100
+    overrides: {}

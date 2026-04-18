@@ -1,0 +1,5 @@
+max_daily_loss: 10000
+max_consecutive_losses: 3
+trading_start_time: "09:00"
+trading_end_time: "15:00"
+order_timeout_sec: 30

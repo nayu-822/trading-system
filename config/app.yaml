@@ -1,0 +1,11 @@
+mode: mock
+rest_poll_interval_sec: 5
+push_enabled: false
+snapshot_enabled: false
+snapshot_dir: snapshots
+snapshot_interval_sec: 60
+snapshot_max_generations: 3
+snapshot_debounce_sec: 5
+recovery_enabled: false
+recovery_mode: manual
+startup_reconcile_enabled: false
