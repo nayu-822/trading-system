@@ -1,4 +1,5 @@
 mode: mock
+log_level: INFO
 rest_poll_interval_sec: 5
 push_enabled: false
 snapshot_enabled: false

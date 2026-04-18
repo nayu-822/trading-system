@@ -10,7 +10,7 @@ from infrastructure.event_bus import EventBus
 from infrastructure.logger import setup_logger
 
 CONFIG_DIR = Path("config")
-LOG_LEVEL = "INFO"
+DEFAULT_LOG_LEVEL = "INFO"
 
 
 def initialize_application(
@@ -28,7 +28,7 @@ def initialize_application(
     config = load_config(config_dir)
     validate_config(config)
 
-    logger = setup_logger(LOG_LEVEL, process_name=EventSource.MAIN.value)
+    logger = setup_logger(config.app.log_level, process_name=EventSource.MAIN.value)
     event_bus = EventBus()
     clock = RealClock()
     event_factory = EventFactory(source=EventSource.MAIN)
@@ -53,7 +53,7 @@ def main() -> int:
         終了コード。
     """
 
-    logger = setup_logger(LOG_LEVEL, process_name=EventSource.MAIN.value)
+    logger = setup_logger(DEFAULT_LOG_LEVEL, process_name=EventSource.MAIN.value)
     try:
         initialize_application()
     except (ConfigLoadError, ConfigValidationError, ValueError, TypeError):

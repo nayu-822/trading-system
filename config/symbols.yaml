@@ -1,8 +1,13 @@
 symbols:
   - code: "7203"
     name: Toyota
+    enabled: true
     market: prime
-    strategy: trend
+    strategy: auto
     allocation_ratio: 1.0
-    lot_size: 100
-    overrides: {}
+    lot_min: 100
+    lot_max: 100
+    lot_multiplier: 1.0
+    strategy_params_override:
+      params: {}
+    note: phase1 sample

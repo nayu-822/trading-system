@@ -9,7 +9,11 @@ EventHandler = Callable[[BaseEvent], None]
 
 
 class EventBus:
-    """同一プロセス内の同期 publish / subscribe を提供する。"""
+    """同一プロセス内の同期 publish / subscribe を提供する。
+
+    handler 例外はログ化して次の購読者へ配送を継続する。
+    失敗した handler がある場合、全購読者への配送後に RuntimeError を送出する。
+    """
 
     def __init__(self) -> None:
         self._subscribers: dict[EventType, list[EventHandler]] = defaultdict(list)
@@ -53,6 +57,7 @@ class EventBus:
         """
 
         handlers = list(self._subscribers.get(event.event_type, []))
+        handler_errors: list[Exception] = []
         self._logger.debug(
             "publish event_type=%s handlers=%s",
             event.event_type.value,
@@ -61,11 +66,14 @@ class EventBus:
         for handler in handlers:
             try:
                 handler(event)
-            except Exception:
+            except Exception as error:
                 self._logger.exception(
                     "event handler failed event_id=%s event_type=%s sequence_no=%s",
                     event.event_id,
                     event.event_type.value,
                     event.sequence_no,
                 )
-                raise
+                handler_errors.append(error)
+
+        if handler_errors:
+            raise RuntimeError("event handler failed") from handler_errors[0]

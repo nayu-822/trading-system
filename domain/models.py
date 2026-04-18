@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from domain.enums import RunMode
 
@@ -8,6 +8,7 @@ class AppConfig:
     """システム全体の設定モデル。"""
 
     mode: RunMode
+    log_level: str
     rest_poll_interval_sec: int
     push_enabled: bool
     snapshot_enabled: bool
@@ -24,9 +25,13 @@ class AppConfig:
 class SymbolOverrideConfig:
     """銘柄別上書き設定モデル。"""
 
-    strategy: str | None = None
+    strategy_params: dict[str, int | float | str | bool | None] = field(
+        default_factory=dict
+    )
     allocation_ratio: float | None = None
-    lot_size: int | None = None
+    lot_min: int | None = None
+    lot_max: int | None = None
+    lot_multiplier: float | None = None
 
 
 @dataclass(frozen=True)
@@ -35,11 +40,15 @@ class SymbolConfig:
 
     code: str
     name: str
+    enabled: bool
     market: str
     strategy: str
     allocation_ratio: float
-    lot_size: int
-    overrides: SymbolOverrideConfig
+    lot_min: int
+    lot_max: int
+    lot_multiplier: float
+    strategy_params_override: SymbolOverrideConfig
+    note: str
 
 
 @dataclass(frozen=True)
@@ -58,12 +67,20 @@ class RangeStrategyConfig:
 
 
 @dataclass(frozen=True)
+class AutoStrategyConfig:
+    """自動戦略選択の最小設定モデル。"""
+
+    enabled: bool
+
+
+@dataclass(frozen=True)
 class StrategyConfig:
     """戦略設定モデル。"""
 
     default_strategy: str
     trend: TrendStrategyConfig
     range: RangeStrategyConfig
+    auto: AutoStrategyConfig
 
 
 @dataclass(frozen=True)

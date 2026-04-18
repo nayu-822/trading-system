@@ -4,6 +4,7 @@ from typing import Any
 from domain.enums import RunMode
 from domain.models import (
     AppConfig,
+    AutoStrategyConfig,
     RangeStrategyConfig,
     RiskConfig,
     StrategyConfig,
@@ -170,6 +171,7 @@ def _parse_scalar(
 def _build_app_config(data: dict[str, Any]) -> AppConfig:
     return AppConfig(
         mode=RunMode(str(data["mode"])),
+        log_level=str(data["log_level"]).upper(),
         rest_poll_interval_sec=int(data["rest_poll_interval_sec"]),
         push_enabled=bool(data["push_enabled"]),
         snapshot_enabled=bool(data["snapshot_enabled"]),
@@ -191,11 +193,17 @@ def _build_symbol_configs(data: dict[str, Any]) -> list[SymbolConfig]:
         SymbolConfig(
             code=str(item["code"]),
             name=str(item["name"]),
-            market=str(item["market"]),
+            enabled=bool(item["enabled"]),
+            market=str(item.get("market", "")),
             strategy=str(item["strategy"]),
             allocation_ratio=float(item["allocation_ratio"]),
-            lot_size=int(item["lot_size"]),
-            overrides=_build_symbol_override_config(dict(item.get("overrides", {}))),
+            lot_min=int(item["lot_min"]),
+            lot_max=int(item["lot_max"]),
+            lot_multiplier=float(item["lot_multiplier"]),
+            strategy_params_override=_build_symbol_override_config(
+                dict(item.get("strategy_params_override", {}))
+            ),
+            note=str(item.get("note", "")),
         )
         for item in symbols
     ]
@@ -203,13 +211,19 @@ def _build_symbol_configs(data: dict[str, Any]) -> list[SymbolConfig]:
 
 def _build_symbol_override_config(data: dict[str, Any]) -> SymbolOverrideConfig:
     return SymbolOverrideConfig(
-        strategy=str(data["strategy"]) if data.get("strategy") is not None else None,
+        strategy_params=dict(data.get("params", {})),
         allocation_ratio=(
             float(data["allocation_ratio"])
             if data.get("allocation_ratio") is not None
             else None
         ),
-        lot_size=int(data["lot_size"]) if data.get("lot_size") is not None else None,
+        lot_min=int(data["lot_min"]) if data.get("lot_min") is not None else None,
+        lot_max=int(data["lot_max"]) if data.get("lot_max") is not None else None,
+        lot_multiplier=(
+            float(data["lot_multiplier"])
+            if data.get("lot_multiplier") is not None
+            else None
+        ),
     )
 
 
@@ -217,6 +231,7 @@ def _build_strategy_config(data: dict[str, Any]) -> StrategyConfig:
     parameters = data["parameters"]
     trend = dict(parameters["trend"])
     range_config = dict(parameters["range"])
+    auto = dict(parameters.get("auto", {}))
     return StrategyConfig(
         default_strategy=str(data["default_strategy"]),
         trend=TrendStrategyConfig(
@@ -224,6 +239,7 @@ def _build_strategy_config(data: dict[str, Any]) -> StrategyConfig:
             long_window=int(trend["long_window"]),
         ),
         range=RangeStrategyConfig(window=int(range_config["window"])),
+        auto=AutoStrategyConfig(enabled=bool(auto.get("enabled", True))),
     )
 
 

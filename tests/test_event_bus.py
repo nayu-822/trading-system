@@ -43,20 +43,23 @@ def test_publish_delivers_event_to_multiple_subscribers() -> None:
     assert received_events_b == [event]
 
 
-def test_publish_raises_and_logs_when_handler_fails(
+def test_publish_continues_delivery_then_raises_when_handler_fails(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     event_bus = EventBus()
     event = _create_event()
+    received_events: list[BaseEvent] = []
 
     def raise_error(_: BaseEvent) -> None:
         raise RuntimeError("handler failed")
 
     event_bus.subscribe(EventType.SYSTEM_STARTED, raise_error)
+    event_bus.subscribe(EventType.SYSTEM_STARTED, received_events.append)
 
     with pytest.raises(RuntimeError), caplog.at_level("ERROR"):
         event_bus.publish(event)
 
+    assert received_events == [event]
     assert "event handler failed" in caplog.text
 
 

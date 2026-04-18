@@ -1,5 +1,8 @@
 from domain.models import SystemConfig
 
+LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+STRATEGIES = {"trend", "range", "auto"}
+
 
 class ConfigValidationError(Exception):
     """設定検証に失敗したことを表す例外。"""
@@ -22,6 +25,10 @@ def validate_config(config: SystemConfig) -> None:
 
 
 def _validate_app_config(config: SystemConfig) -> None:
+    if config.app.log_level not in LOG_LEVELS:
+        raise ConfigValidationError(
+            "log_level は有効な logging レベルで指定してください"
+        )
     if config.app.rest_poll_interval_sec <= 0:
         raise ConfigValidationError("rest_poll_interval_sec は1以上で指定してください")
     if config.app.snapshot_interval_sec <= 0:
@@ -42,12 +49,17 @@ def _validate_symbols(config: SystemConfig) -> None:
 
     symbol_codes: set[str] = set()
     allocation_total = 0.0
+    enabled_count = 0
     for symbol in config.symbols:
         if not symbol.code:
             raise ConfigValidationError("銘柄コードは必須です")
         if symbol.code in symbol_codes:
             raise ConfigValidationError(f"銘柄コードが重複しています: {symbol.code}")
         symbol_codes.add(symbol.code)
+
+        if not symbol.enabled:
+            continue
+        enabled_count += 1
 
         if symbol.strategy not in _available_strategies():
             raise ConfigValidationError(
@@ -57,17 +69,14 @@ def _validate_symbols(config: SystemConfig) -> None:
             raise ConfigValidationError(
                 "allocation_ratio は0より大きく1以下で指定してください"
             )
-        if symbol.lot_size <= 0:
-            raise ConfigValidationError("lot_size は1以上で指定してください")
+        if symbol.lot_min <= 0:
+            raise ConfigValidationError("lot_min は1以上で指定してください")
+        if symbol.lot_max < symbol.lot_min:
+            raise ConfigValidationError("lot_max は lot_min 以上で指定してください")
+        if symbol.lot_multiplier <= 0:
+            raise ConfigValidationError("lot_multiplier は0より大きく指定してください")
 
-        overrides = symbol.overrides
-        if (
-            overrides.strategy is not None
-            and overrides.strategy not in _available_strategies()
-        ):
-            raise ConfigValidationError(
-                f"未定義の override strategy が指定されています: {overrides.strategy}"
-            )
+        overrides = symbol.strategy_params_override
         if (
             overrides.allocation_ratio is not None
             and not 0 < overrides.allocation_ratio <= 1
@@ -75,11 +84,25 @@ def _validate_symbols(config: SystemConfig) -> None:
             raise ConfigValidationError(
                 "override allocation_ratio は0より大きく1以下で指定してください"
             )
-        if overrides.lot_size is not None and overrides.lot_size <= 0:
-            raise ConfigValidationError("override lot_size は1以上で指定してください")
+        if overrides.lot_min is not None and overrides.lot_min <= 0:
+            raise ConfigValidationError("override lot_min は1以上で指定してください")
+        if (
+            overrides.lot_min is not None
+            and overrides.lot_max is not None
+            and overrides.lot_max < overrides.lot_min
+        ):
+            raise ConfigValidationError(
+                "override lot_max は lot_min 以上で指定してください"
+            )
+        if overrides.lot_multiplier is not None and overrides.lot_multiplier <= 0:
+            raise ConfigValidationError(
+                "override lot_multiplier は0より大きく指定してください"
+            )
 
         allocation_total += symbol.allocation_ratio
 
+    if enabled_count == 0:
+        raise ConfigValidationError("enabled な symbols は1件以上指定してください")
     if allocation_total > 1:
         raise ConfigValidationError("allocation_ratio の合計は1以下で指定してください")
 
@@ -115,4 +138,4 @@ def _validate_risk(config: SystemConfig) -> None:
 
 
 def _available_strategies() -> set[str]:
-    return {"trend", "range"}
+    return STRATEGIES
