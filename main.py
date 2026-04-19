@@ -81,8 +81,9 @@ class ApplicationRuntime:
             self.persistence_process.start()
             if self.config.app.snapshot_enabled:
                 self.snapshot_process.start()
-            self.signal_process.start()
             self.trading_process.start()
+            self.sync_orders_once()
+            self.signal_process.start()
             self._publish_started_event()
             self._started = True
         except Exception:
@@ -112,6 +113,25 @@ class ApplicationRuntime:
             csv_path=None,
             symbol=enabled_symbol.code,
         )
+
+    def sync_orders_once(self) -> int:
+        """API モード起動時に REST 由来の注文状態を一度だけ再同期する。"""
+
+        if self.config.app.data_source_mode != DataSourceMode.API:
+            return 0
+        self.logger.info(
+            "startup order resync requested restored_snapshot=%s",
+            self.restored_snapshot,
+        )
+        try:
+            synced_count = self.external_data_process.sync_orders_once()
+        except Exception:
+            self.logger.exception("startup order resync failed")
+            if self.config.app.trading_mode == TradingMode.LIVE:
+                raise
+            return 0
+        self.logger.info("startup order resync completed count=%s", synced_count)
+        return synced_count
 
     def wait(self, stop_event: Event | None = None) -> None:
         """API モードでは停止要求まで待機し、CSV モードでは即時に戻る。"""

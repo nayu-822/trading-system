@@ -6,9 +6,21 @@ from threading import Event
 from typing import Any
 
 import main as app_main
-from domain.enums import DataSourceMode, EventSource, EventType, TradingMode
-from domain.events import BaseEvent, EventFactory, MarketDataPayload
-from domain.models import SystemConfig
+from domain.enums import (
+    DataSourceMode,
+    EventSource,
+    EventType,
+    OrderSide,
+    OrderStatus,
+    TradingMode,
+)
+from domain.events import (
+    BaseEvent,
+    EventFactory,
+    MarketDataPayload,
+    OrderStatusPayload,
+)
+from domain.models import Order, SystemConfig
 from infrastructure.config_loader import load_config
 from infrastructure.event_bus import EventBus
 
@@ -44,6 +56,7 @@ def test_runtime_initializes_api_paper_and_runs_end_to_end(
     state = runtime.trading_process.get_state("7203")
 
     assert fake_external.run_count == 1
+    assert fake_external.sync_count == 1
     assert fake_external.stop_count == 1
     assert state.position is not None
     assert state.position.quantity == 100
@@ -83,6 +96,7 @@ def test_runtime_keeps_csv_paper_flow(monkeypatch) -> None:
     state = runtime.trading_process.get_state("7203")
 
     assert fake_external.run_count == 1
+    assert fake_external.sync_count == 0
     assert state.position is not None
     assert state.position.quantity == 100
 
@@ -148,6 +162,57 @@ def test_runtime_restores_snapshot_and_continues_trading(monkeypatch) -> None:
     assert restored_state.position is not None
     assert restored_state.position.quantity == 100
     assert len(restored_state.orders) == 0
+
+
+def test_runtime_resyncs_order_status_after_restore(monkeypatch) -> None:
+    snapshot_dir = _test_dir("restore_order_resync")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+        snapshot_enabled=True,
+        recovery_enabled=True,
+    )
+    original_runtime = app_main.build_application_runtime(
+        config=replace(config, app=replace(config.app, recovery_enabled=False))
+    )
+    state = original_runtime.trading_process.get_state("7203")
+    state.orders.append(
+        Order(
+            order_id="local-order-1",
+            external_order_id="api-order-1",
+            symbol="7203",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_type="MARKET",
+            status=OrderStatus.REQUESTED,
+            remaining_quantity=100,
+        )
+    )
+    original_runtime.snapshot_process.save_snapshot(_timestamp())
+    original_runtime.snapshot_process.start()
+    original_runtime.snapshot_process.flush()
+    original_runtime.snapshot_process.stop()
+    fake_external = _FakeExternalDataProcess(
+        events=(),
+        sync_events=(_order_status_event("api-order-1"),),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(fake_external),
+    )
+
+    restored_runtime = app_main.build_application_runtime(config=config)
+    restored_runtime.start()
+    restored_runtime.flush()
+    restored_runtime.stop()
+    restored_state = restored_runtime.trading_process.get_state("7203")
+    restored_order = restored_state.orders[0]
+
+    assert fake_external.sync_count == 1
+    assert restored_order.status == OrderStatus.FILLED
+    assert restored_state.position is not None
+    assert restored_state.position.quantity == 100
 
 
 def test_runtime_start_stop_start_does_not_duplicate_subscriptions(
@@ -281,10 +346,16 @@ def test_initialize_application_flushes_when_keyboard_interrupt(monkeypatch) -> 
 
 
 class _FakeExternalDataProcess:
-    def __init__(self, events: tuple[BaseEvent[Any], ...]) -> None:
+    def __init__(
+        self,
+        events: tuple[BaseEvent[Any], ...],
+        sync_events: tuple[BaseEvent[Any], ...] = (),
+    ) -> None:
         self.events = events
+        self.sync_events = sync_events
         self.event_bus: EventBus | None = None
         self.run_count = 0
+        self.sync_count = 0
         self.stop_count = 0
 
     def run(
@@ -298,6 +369,14 @@ class _FakeExternalDataProcess:
         self.run_count += 1
         for event in self.events:
             self.event_bus.publish(event)
+
+    def sync_orders_once(self) -> int:
+        if self.event_bus is None:
+            raise AssertionError("event_bus is not configured")
+        self.sync_count += 1
+        for event in self.sync_events:
+            self.event_bus.publish(event)
+        return len(self.sync_events)
 
     def stop(self) -> None:
         self.stop_count += 1
@@ -373,6 +452,22 @@ def _market_data_event(price: float) -> BaseEvent[Any]:
             ask=None,
             volume=None,
             timestamp=timestamp,
+        ),
+    )
+
+
+def _order_status_event(order_id: str) -> BaseEvent[Any]:
+    timestamp = _timestamp()
+    return EventFactory(source=EventSource.EXTERNAL_DATA).create(
+        event_type=EventType.ORDER_STATUS_UPDATED,
+        timestamp=timestamp,
+        symbol="7203",
+        payload=OrderStatusPayload(
+            order_id=order_id,
+            status=OrderStatus.FILLED,
+            filled_quantity=100,
+            remaining_quantity=0,
+            avg_price=1000.0,
         ),
     )
 
