@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from domain.enums import OrderSide, OrderStatus, RunMode, StrategyType
+from domain.enums import DataSourceMode, OrderSide, OrderStatus, RunMode, StrategyType
 
 
 @dataclass(frozen=True)
@@ -63,13 +63,49 @@ class TradingSymbolState:
 
 
 @dataclass(frozen=True)
+class KabuApiConfig:
+    """kabuステーション API 接続設定。"""
+
+    base_url: str
+    push_url: str
+    timeout_sec: int
+    token_env_name: str
+
+
+@dataclass(frozen=True)
+class KabuOrderStatus:
+    """REST API から取得した最小注文状態。"""
+
+    order_id: str
+    symbol: str | None
+    status: OrderStatus
+    filled_quantity: int
+    remaining_quantity: int
+    avg_price: float | None
+
+
+@dataclass(frozen=True)
+class KabuMarketData:
+    """Push API から受信した最小市場データ。"""
+
+    symbol: str
+    price: float
+    bid: float | None
+    ask: float | None
+    volume: int | None
+    timestamp: str | None
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """システム全体の設定モデル。"""
 
     mode: RunMode
+    data_source_mode: DataSourceMode
     log_level: str
     rest_poll_interval_sec: int
     push_enabled: bool
+    kabu_api: KabuApiConfig
     snapshot_enabled: bool
     snapshot_dir: str
     snapshot_interval_sec: int

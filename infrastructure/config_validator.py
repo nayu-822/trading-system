@@ -2,6 +2,7 @@ from domain.models import SystemConfig
 
 LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 STRATEGIES = {"trend", "range", "auto"}
+DATA_SOURCE_MODES = {"csv", "api"}
 
 
 class ConfigValidationError(Exception):
@@ -29,8 +30,18 @@ def _validate_app_config(config: SystemConfig) -> None:
         raise ConfigValidationError(
             "log_level は有効な logging レベルで指定してください"
         )
+    if config.app.data_source_mode.value not in DATA_SOURCE_MODES:
+        raise ConfigValidationError("data_source_mode は csv / api で指定してください")
     if config.app.rest_poll_interval_sec <= 0:
         raise ConfigValidationError("rest_poll_interval_sec は1以上で指定してください")
+    if config.app.kabu_api.timeout_sec <= 0:
+        raise ConfigValidationError("api_timeout_sec は1以上で指定してください")
+    if not config.app.kabu_api.base_url:
+        raise ConfigValidationError("kabu_api_base_url は必須です")
+    if not config.app.kabu_api.push_url:
+        raise ConfigValidationError("kabu_push_url は必須です")
+    if not config.app.kabu_api.token_env_name:
+        raise ConfigValidationError("token_env_name は必須です")
     if config.app.snapshot_interval_sec <= 0:
         raise ConfigValidationError("snapshot_interval_sec は1以上で指定してください")
     if config.app.snapshot_max_generations <= 0:

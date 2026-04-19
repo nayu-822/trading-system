@@ -2,9 +2,12 @@ import logging
 from pathlib import Path
 
 from data_source.csv_loader import CsvMarketDataLoader
-from domain.enums import EventSource, EventType, StrategyType
+from data_source.kabu_api_client import KabuApiClient, KabuApiError
+from data_source.push_client import PushClient
+from data_source.rest_poller import RestPoller
+from domain.enums import DataSourceMode, EventSource, EventType, StrategyType
 from domain.events import EventFactory, SystemStartedPayload
-from domain.models import SignalStrategyConfig, TradingSymbolConfig
+from domain.models import SignalStrategyConfig, SystemConfig, TradingSymbolConfig
 from infrastructure.clock import RealClock
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
@@ -96,14 +99,22 @@ def initialize_application(
     event_bus.publish(started_event)
 
     target_csv_path = csv_path or DEFAULT_CSV_PATH
-    if target_csv_path.exists():
-        enabled_symbol = next(symbol for symbol in config.symbols if symbol.enabled)
-        external_data_process = ExternalDataProcess(
-            event_bus=event_bus,
-            csv_loader=CsvMarketDataLoader(),
-        )
-        external_data_process.run_csv(
+    enabled_symbol = next(symbol for symbol in config.symbols if symbol.enabled)
+    external_data_process = _build_external_data_process(
+        event_bus=event_bus,
+        config=config,
+        logger=logger,
+    )
+    if config.app.data_source_mode == DataSourceMode.CSV and target_csv_path.exists():
+        external_data_process.run(
+            data_source_mode=config.app.data_source_mode,
             csv_path=target_csv_path,
+            symbol=enabled_symbol.code,
+        )
+    elif config.app.data_source_mode == DataSourceMode.API:
+        external_data_process.run(
+            data_source_mode=config.app.data_source_mode,
+            csv_path=None,
             symbol=enabled_symbol.code,
         )
 
@@ -113,6 +124,33 @@ def initialize_application(
 
     logger.info("application initialized mode=%s", config.app.mode.value)
     return event_bus, logger
+
+
+def _build_external_data_process(
+    event_bus: EventBus,
+    config: SystemConfig,
+    logger: logging.Logger,
+) -> ExternalDataProcess:
+    api_client = KabuApiClient(config=config.app.kabu_api)
+    rest_poller = None
+    push_client = None
+    if config.app.data_source_mode == DataSourceMode.API:
+        push_client = PushClient(config=config.app.kabu_api)
+        try:
+            token = api_client.get_token()
+            rest_poller = RestPoller(
+                api_client=api_client,
+                token=token,
+                interval_sec=config.app.rest_poll_interval_sec,
+            )
+        except KabuApiError:
+            logger.exception("kabu api initialization failed")
+    return ExternalDataProcess(
+        event_bus=event_bus,
+        csv_loader=CsvMarketDataLoader(),
+        push_client=push_client,
+        rest_poller=rest_poller,
+    )
 
 
 def main() -> int:

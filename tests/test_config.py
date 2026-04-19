@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from domain.enums import RunMode
+from domain.enums import DataSourceMode, RunMode
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
 
@@ -12,7 +12,12 @@ def test_load_config_returns_structured_model() -> None:
     config = load_config(Path("config"))
 
     assert config.app.mode == RunMode.MOCK
+    assert config.app.data_source_mode == DataSourceMode.CSV
     assert config.app.log_level == "INFO"
+    assert config.app.kabu_api.base_url == "http://localhost:18080/kabusapi"
+    assert config.app.kabu_api.push_url == "ws://localhost:18080/kabusapi/websocket"
+    assert config.app.kabu_api.timeout_sec == 5
+    assert config.app.kabu_api.token_env_name == "KABU_API_PASSWORD"
     assert config.symbols[0].code == "7203"
     assert config.symbols[0].enabled is True
     assert config.symbols[0].strategy == "auto"

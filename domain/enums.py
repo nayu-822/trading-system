@@ -10,6 +10,13 @@ class RunMode(str, Enum):
     BACKTEST = "backtest"
 
 
+class DataSourceMode(str, Enum):
+    """外部データ取得方式。"""
+
+    CSV = "csv"
+    API = "api"
+
+
 class EventType(str, Enum):
     """システム内で扱うイベント種別。"""
 

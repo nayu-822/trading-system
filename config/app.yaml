@@ -1,7 +1,12 @@
 mode: mock
+data_source_mode: csv
 log_level: INFO
 rest_poll_interval_sec: 5
 push_enabled: false
+kabu_api_base_url: http://localhost:18080/kabusapi
+kabu_push_url: ws://localhost:18080/kabusapi/websocket
+api_timeout_sec: 5
+token_env_name: KABU_API_PASSWORD
 snapshot_enabled: false
 snapshot_dir: snapshots
 snapshot_interval_sec: 60

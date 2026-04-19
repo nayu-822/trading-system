@@ -1,10 +1,11 @@
 from pathlib import Path
 from typing import Any
 
-from domain.enums import RunMode
+from domain.enums import DataSourceMode, RunMode
 from domain.models import (
     AppConfig,
     AutoStrategyConfig,
+    KabuApiConfig,
     RangeStrategyConfig,
     RiskConfig,
     StrategyConfig,
@@ -171,9 +172,20 @@ def _parse_scalar(
 def _build_app_config(data: dict[str, Any]) -> AppConfig:
     return AppConfig(
         mode=RunMode(str(data["mode"])),
+        data_source_mode=DataSourceMode(str(data.get("data_source_mode", "csv"))),
         log_level=str(data["log_level"]).upper(),
         rest_poll_interval_sec=int(data["rest_poll_interval_sec"]),
         push_enabled=bool(data["push_enabled"]),
+        kabu_api=KabuApiConfig(
+            base_url=str(
+                data.get("kabu_api_base_url", "http://localhost:18080/kabusapi")
+            ),
+            push_url=str(
+                data.get("kabu_push_url", "ws://localhost:18080/kabusapi/websocket")
+            ),
+            timeout_sec=int(data.get("api_timeout_sec", 5)),
+            token_env_name=str(data.get("token_env_name", "KABU_API_PASSWORD")),
+        ),
         snapshot_enabled=bool(data["snapshot_enabled"]),
         snapshot_dir=str(data["snapshot_dir"]),
         snapshot_interval_sec=int(data["snapshot_interval_sec"]),
