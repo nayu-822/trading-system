@@ -5,7 +5,13 @@ from data_source.csv_loader import CsvMarketDataLoader
 from data_source.kabu_api_client import KabuApiClient, KabuApiError
 from data_source.push_client import PushClient
 from data_source.rest_poller import RestPoller
-from domain.enums import DataSourceMode, EventSource, EventType, StrategyType
+from domain.enums import (
+    DataSourceMode,
+    EventSource,
+    EventType,
+    StrategyType,
+    TradingMode,
+)
 from domain.events import EventFactory, SystemStartedPayload
 from domain.models import SignalStrategyConfig, SystemConfig, TradingSymbolConfig
 from infrastructure.clock import RealClock
@@ -19,6 +25,9 @@ from processes.persistence_process import PersistenceProcess
 from processes.signal_process import SignalProcess
 from processes.snapshot_process import SnapshotProcess
 from processes.trading_process import TradingProcess
+from trading.live_order_gateway import LiveOrderGateway
+from trading.mock_order_gateway import MockOrderGateway
+from trading.order_gateway import OrderGateway
 
 CONFIG_DIR = Path("config")
 DEFAULT_CSV_PATH = Path("data/market_data.csv")
@@ -68,6 +77,7 @@ def initialize_application(
             for symbol in config.symbols
             if symbol.enabled
         ),
+        order_gateway=_build_order_gateway(config.app.trading_mode),
     )
     persistence_process = PersistenceProcess(
         event_bus=event_bus,
@@ -151,6 +161,14 @@ def _build_external_data_process(
         push_client=push_client,
         rest_poller=rest_poller,
     )
+
+
+def _build_order_gateway(trading_mode: TradingMode) -> OrderGateway:
+    if trading_mode == TradingMode.PAPER:
+        return MockOrderGateway()
+    if trading_mode == TradingMode.LIVE:
+        return LiveOrderGateway()
+    raise ValueError(f"unsupported trading_mode={trading_mode.value}")
 
 
 def main() -> int:

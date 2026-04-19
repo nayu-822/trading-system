@@ -1,6 +1,13 @@
 from dataclasses import dataclass, field
 
-from domain.enums import DataSourceMode, OrderSide, OrderStatus, RunMode, StrategyType
+from domain.enums import (
+    DataSourceMode,
+    OrderSide,
+    OrderStatus,
+    RunMode,
+    StrategyType,
+    TradingMode,
+)
 
 
 @dataclass(frozen=True)
@@ -101,6 +108,7 @@ class AppConfig:
     """システム全体の設定モデル。"""
 
     mode: RunMode
+    trading_mode: TradingMode
     data_source_mode: DataSourceMode
     log_level: str
     rest_poll_interval_sec: int

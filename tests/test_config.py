@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from domain.enums import DataSourceMode, RunMode
+from domain.enums import DataSourceMode, RunMode, TradingMode
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
 
@@ -12,6 +12,7 @@ def test_load_config_returns_structured_model() -> None:
     config = load_config(Path("config"))
 
     assert config.app.mode == RunMode.MOCK
+    assert config.app.trading_mode == TradingMode.PAPER
     assert config.app.data_source_mode == DataSourceMode.CSV
     assert config.app.log_level == "INFO"
     assert config.app.kabu_api.base_url == "http://localhost:18080/kabusapi"

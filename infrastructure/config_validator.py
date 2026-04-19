@@ -3,6 +3,7 @@ from domain.models import SystemConfig
 LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 STRATEGIES = {"trend", "range", "auto"}
 DATA_SOURCE_MODES = {"csv", "api"}
+TRADING_MODES = {"paper", "live"}
 
 
 class ConfigValidationError(Exception):
@@ -32,6 +33,8 @@ def _validate_app_config(config: SystemConfig) -> None:
         )
     if config.app.data_source_mode.value not in DATA_SOURCE_MODES:
         raise ConfigValidationError("data_source_mode は csv / api で指定してください")
+    if config.app.trading_mode.value not in TRADING_MODES:
+        raise ConfigValidationError("trading_mode は paper / live で指定してください")
     if config.app.rest_poll_interval_sec <= 0:
         raise ConfigValidationError("rest_poll_interval_sec は1以上で指定してください")
     if config.app.kabu_api.timeout_sec <= 0:

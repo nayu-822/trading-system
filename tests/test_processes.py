@@ -4,6 +4,7 @@ from typing import Any
 
 from data_source.csv_loader import CsvMarketDataLoader
 from domain.enums import (
+    DataSourceMode,
     EventSource,
     EventType,
     OrderSide,
@@ -17,6 +18,7 @@ from domain.events import (
     MarketDataPayload,
     OrderRequested,
     OrderStatusPayload,
+    PositionUpdated,
     SignalDetected,
     SignalPayload,
 )
@@ -26,6 +28,7 @@ from processes.external_data_process import ExternalDataProcess
 from processes.signal_process import SignalProcess, SignalStrategySlot
 from processes.trading_process import TradingProcess
 from strategy.trend_strategy import TrendStrategy
+from trading.live_order_gateway import LiveOrderGateway
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
@@ -310,6 +313,60 @@ def test_trading_process_updates_position_from_order_status() -> None:
     assert state.position.average_price == 1000.0
 
 
+def test_trading_process_publishes_position_updated_after_paper_fill() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    received_positions: list[BaseEvent[Any]] = []
+
+    trading_process.start()
+    event_bus.subscribe(EventType.POSITION_UPDATED, received_positions.append)
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+
+    state = trading_process.get_state("7203")
+
+    assert len(received_positions) == 1
+    assert isinstance(received_positions[0], PositionUpdated)
+    assert state.position is not None
+    assert state.position.quantity == 100
+    assert received_positions[0].payload.quantity == 100
+
+
+def test_trading_process_uses_gateway_without_direct_fill() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    received_statuses: list[BaseEvent[Any]] = []
+
+    trading_process.start()
+    event_bus.subscribe(EventType.ORDER_STATUS_UPDATED, received_statuses.append)
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+
+    assert len(received_statuses) == 1
+    assert received_statuses[0].payload.status == OrderStatus.FILLED
+
+
+def test_trading_process_handles_unimplemented_live_gateway_safely(caplog) -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        order_gateway=LiveOrderGateway(),
+    )
+    received_statuses: list[BaseEvent[Any]] = []
+
+    trading_process.start()
+    event_bus.subscribe(EventType.ORDER_STATUS_UPDATED, received_statuses.append)
+    with caplog.at_level("WARNING"):
+        event_bus.publish(_create_signal_event(SignalType.BUY))
+
+    state = trading_process.get_state("7203")
+
+    assert "order gateway is not implemented" in caplog.text
+    assert received_statuses == []
+    assert state.position is not None
+    assert state.position.quantity == 0
+    assert state.orders[0].status == OrderStatus.REQUESTED
+
+
 def test_trading_process_updates_average_price_when_long_reverses_to_short() -> None:
     event_bus = EventBus()
     trading_process = TradingProcess(
@@ -385,6 +442,65 @@ def test_csv_event_flow_publishes_order_requested_end_to_end() -> None:
     assert len(received_orders) == 1
     assert isinstance(received_orders[0], OrderRequested)
     assert received_orders[0].payload.side == OrderSide.BUY
+
+
+def test_csv_event_flow_publishes_position_updated_in_paper_mode() -> None:
+    event_bus = EventBus()
+    signal_process = SignalProcess(event_bus=event_bus)
+    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    external_data_process = ExternalDataProcess(
+        event_bus=event_bus,
+        csv_loader=CsvMarketDataLoader(),
+    )
+    received_positions: list[BaseEvent[Any]] = []
+
+    signal_process.start()
+    trading_process.start()
+    event_bus.subscribe(EventType.POSITION_UPDATED, received_positions.append)
+    external_data_process.run_csv(
+        csv_path=FIXTURE_DIR / "market_data.csv",
+        symbol="7203",
+    )
+
+    assert len(received_positions) == 1
+    assert isinstance(received_positions[0], PositionUpdated)
+    assert received_positions[0].payload.symbol == "7203"
+    assert received_positions[0].payload.quantity == 100
+
+
+def test_api_event_flow_publishes_position_updated_in_paper_mode() -> None:
+    event_bus = EventBus()
+    signal_process = SignalProcess(event_bus=event_bus)
+    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    external_data_process = ExternalDataProcess(
+        event_bus=event_bus,
+        push_client=_FakePushClient(),
+    )
+    received_positions: list[BaseEvent[Any]] = []
+
+    signal_process.start()
+    trading_process.start()
+    event_bus.subscribe(EventType.POSITION_UPDATED, received_positions.append)
+    external_data_process.run(
+        data_source_mode=DataSourceMode.API,
+        csv_path=None,
+        symbol="7203",
+    )
+
+    assert len(received_positions) == 1
+    assert isinstance(received_positions[0], PositionUpdated)
+    assert received_positions[0].payload.quantity == 100
+
+
+class _FakePushClient:
+    def __init__(self) -> None:
+        self.on_event = None
+
+    def start(self) -> None:
+        if self.on_event is None:
+            return
+        self.on_event(_create_market_data_event(price=100.0))
+        self.on_event(_create_market_data_event(price=101.0))
 
 
 def _find_strategy_slot(

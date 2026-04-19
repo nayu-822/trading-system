@@ -8,8 +8,8 @@ from domain.events import (
     BaseEvent,
     EventFactory,
     OrderRequestedPayload,
-    OrderStatusPayload,
     OrderStatusUpdated,
+    PositionPayload,
     SignalDetected,
 )
 from domain.models import Order, Position, TradingSymbolConfig, TradingSymbolState
@@ -20,6 +20,8 @@ from domain.snapshots import (
     TradingSymbolStateSnapshot,
 )
 from infrastructure.event_bus import EventBus
+from trading.mock_order_gateway import MockOrderGateway
+from trading.order_gateway import OrderGateway
 
 
 @dataclass
@@ -31,11 +33,16 @@ class TradingProcess:
     order_type: str = "MARKET"
     lot_configs: tuple[TradingSymbolConfig, ...] = ()
     auto_fill_orders: bool = True
+    order_gateway: OrderGateway | None = None
     event_factory: EventFactory = field(
         default_factory=lambda: EventFactory(source=EventSource.TRADING)
     )
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
     states: list[TradingSymbolState] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.order_gateway is None:
+            self.order_gateway = MockOrderGateway(event_factory=self.event_factory)
 
     def start(self) -> None:
         """SignalDetected と OrderStatusUpdated の購読を開始する。"""
@@ -119,8 +126,7 @@ class TradingProcess:
             order.side.value,
             order.quantity,
         )
-        if self.auto_fill_orders:
-            self._publish_filled_order(order=order, timestamp=event.timestamp)
+        self._execute_order(order=order, timestamp=event.timestamp)
 
     def handle_order_status(self, event: BaseEvent) -> None:
         """注文状態イベントを受けて注文と建玉を更新する。"""
@@ -142,11 +148,16 @@ class TradingProcess:
         order.remaining_quantity = event.payload.remaining_quantity
         order.avg_price = event.payload.avg_price
         if event.payload.status == OrderStatus.FILLED:
+            position = self._ensure_position(state)
             self._update_position(
-                position=self._ensure_position(state),
+                position=position,
                 order=order,
                 filled_quantity=event.payload.filled_quantity,
                 avg_price=event.payload.avg_price or 0.0,
+            )
+            self._publish_position_updated(
+                position=position,
+                timestamp=event.timestamp,
             )
         self.logger.info(
             "order status updated order_id=%s status=%s filled_quantity=%s remaining_quantity=%s",
@@ -155,6 +166,46 @@ class TradingProcess:
             order.filled_quantity,
             order.remaining_quantity,
         )
+
+    def _execute_order(self, order: Order, timestamp: datetime) -> None:
+        if not self.auto_fill_orders:
+            return
+        if self.order_gateway is None:
+            self.logger.warning("order gateway is not configured")
+            return
+        try:
+            status_events = self.order_gateway.place_order(
+                order=order,
+                timestamp=timestamp,
+            )
+        except NotImplementedError:
+            self.logger.warning("order gateway is not implemented", exc_info=True)
+            return
+        except Exception:
+            self.logger.exception("order gateway failed order_id=%s", order.order_id)
+            return
+
+        for status_event in status_events:
+            self.event_bus.publish(status_event)
+
+    def _publish_position_updated(
+        self,
+        position: Position,
+        timestamp: datetime,
+    ) -> None:
+        position_event = self.event_factory.create(
+            event_type=EventType.POSITION_UPDATED,
+            timestamp=timestamp,
+            symbol=position.symbol,
+            payload=PositionPayload(
+                symbol=position.symbol,
+                quantity=position.quantity,
+                avg_price=position.average_price,
+                realized_pnl=None,
+                unrealized_pnl=None,
+            ),
+        )
+        self.event_bus.publish(position_event)
 
     def get_state(self, symbol: str) -> TradingSymbolState:
         """銘柄別の売買状態を取得し、なければ初期化する。"""
@@ -292,21 +343,6 @@ class TradingProcess:
         if signal_type == SignalType.EXIT:
             return abs(position.quantity)
         return lot_size
-
-    def _publish_filled_order(self, order: Order, timestamp: datetime) -> None:
-        status_event = self.event_factory.create(
-            event_type=EventType.ORDER_STATUS_UPDATED,
-            timestamp=timestamp,
-            symbol=order.symbol,
-            payload=OrderStatusPayload(
-                order_id=order.order_id,
-                status=OrderStatus.FILLED,
-                filled_quantity=order.quantity,
-                remaining_quantity=0,
-                avg_price=order.price or 0.0,
-            ),
-        )
-        self.event_bus.publish(status_event)
 
     def _find_order(self, order_id: str) -> Order | None:
         for state in self.states:

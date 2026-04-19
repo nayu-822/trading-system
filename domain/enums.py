@@ -17,6 +17,13 @@ class DataSourceMode(str, Enum):
     API = "api"
 
 
+class TradingMode(str, Enum):
+    """注文実行先の切替モード。"""
+
+    PAPER = "paper"
+    LIVE = "live"
+
+
 class EventType(str, Enum):
     """システム内で扱うイベント種別。"""
 
