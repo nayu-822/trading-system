@@ -92,6 +92,25 @@ def test_persistence_process_does_not_duplicate_after_restart() -> None:
     assert len(lines) == 1
 
 
+def test_persistence_process_start_stop_start_keeps_single_subscription() -> None:
+    event_bus = EventBus()
+    event_log_path = _test_file_path("restart_subscription_events.jsonl")
+    _remove_file(event_log_path)
+    persistence_process = PersistenceProcess(
+        event_bus=event_bus,
+        storage=FileStorage(),
+        event_log_path=event_log_path,
+    )
+
+    persistence_process.start()
+    persistence_process.stop()
+    persistence_process.start()
+
+    assert len(event_bus._subscribers[EventType.MARKET_DATA_UPDATED]) == 1
+
+    persistence_process.stop()
+
+
 def test_snapshot_process_saves_trading_snapshot() -> None:
     event_bus = EventBus()
     snapshot_path = _test_file_path("trading_snapshot_save.json")
@@ -142,6 +161,31 @@ def test_snapshot_process_does_not_duplicate_after_restart() -> None:
     event_bus.publish(_create_order_requested_event())
 
     assert snapshot_process._event_count == 1
+    snapshot_process.stop()
+    _remove_file(snapshot_path)
+
+
+def test_snapshot_process_start_stop_start_keeps_single_subscription() -> None:
+    event_bus = EventBus()
+    snapshot_path = _test_file_path("trading_snapshot_restart_subscription.json")
+    _remove_file(snapshot_path)
+    trading_process = TradingProcess(event_bus=event_bus)
+    snapshot_process = SnapshotProcess(
+        event_bus=event_bus,
+        trading_process=trading_process,
+        storage=FileStorage(),
+        snapshot_path=snapshot_path,
+        event_threshold=2,
+    )
+
+    snapshot_process.start()
+    snapshot_process.stop()
+    snapshot_process.start()
+
+    assert len(event_bus._subscribers[EventType.ORDER_REQUESTED]) == 1
+    assert len(event_bus._subscribers[EventType.ORDER_STATUS_UPDATED]) == 1
+    assert len(event_bus._subscribers[EventType.POSITION_UPDATED]) == 1
+
     snapshot_process.stop()
     _remove_file(snapshot_path)
 

@@ -35,7 +35,7 @@ def test_main_uses_config_log_level_when_config_can_be_loaded(
         log_levels.append(level)
         return fake_logger
 
-    def fail_initialize_application() -> None:
+    def fail_initialize_application(*_, **__) -> None:
         raise ConfigValidationError("invalid config")
 
     monkeypatch.setattr(app_main, "load_config", lambda _: config)

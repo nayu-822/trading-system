@@ -2,6 +2,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 import main as app_main
@@ -181,6 +182,45 @@ def test_runtime_start_stop_start_does_not_duplicate_subscriptions(
 
     assert len([line for line in lines if "MarketDataUpdated" in line]) == 2
     assert len([line for line in lines if "SignalDetected" in line]) == 1
+
+
+def test_api_runtime_waits_until_stop_event_is_set(monkeypatch) -> None:
+    snapshot_dir = _test_dir("api_wait")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(_FakeExternalDataProcess(events=())),
+    )
+    runtime = app_main.build_application_runtime(config=config)
+    stop_event = Event()
+
+    stop_event.set()
+    runtime.wait(stop_event=stop_event)
+
+    assert stop_event.is_set()
+
+
+def test_csv_runtime_wait_returns_without_stop_event(monkeypatch) -> None:
+    snapshot_dir = _test_dir("csv_wait")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.CSV,
+        snapshot_dir=snapshot_dir,
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(_FakeExternalDataProcess(events=())),
+    )
+    runtime = app_main.build_application_runtime(config=config)
+    stop_event = Event()
+
+    runtime.wait(stop_event=stop_event)
+
+    assert not stop_event.is_set()
 
 
 class _FakeExternalDataProcess:

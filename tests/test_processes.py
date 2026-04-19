@@ -192,6 +192,22 @@ def test_signal_process_falls_back_to_trend_when_auto_is_configured(caplog) -> N
     assert received_events[0].payload.indicators[0].value == 1.0
 
 
+def test_signal_process_start_stop_start_does_not_duplicate_subscription() -> None:
+    event_bus = EventBus()
+    signal_process = SignalProcess(event_bus=event_bus)
+    received_events: list[BaseEvent[Any]] = []
+
+    signal_process.start()
+    signal_process.stop()
+    signal_process.start()
+    event_bus.subscribe(EventType.SIGNAL_DETECTED, received_events.append)
+    event_bus.publish(_create_market_data_event(price=100.0))
+    event_bus.publish(_create_market_data_event(price=101.0))
+
+    assert len(event_bus._subscribers[EventType.MARKET_DATA_UPDATED]) == 1
+    assert len(received_events) == 1
+
+
 def test_trading_process_publishes_order_requested_from_signal() -> None:
     event_bus = EventBus()
     trading_process = TradingProcess(
@@ -365,6 +381,22 @@ def test_trading_process_handles_unimplemented_live_gateway_safely(caplog) -> No
     assert state.position is not None
     assert state.position.quantity == 0
     assert state.orders[0].status == OrderStatus.REQUESTED
+
+
+def test_trading_process_start_stop_start_does_not_duplicate_subscription() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    received_orders: list[BaseEvent[Any]] = []
+
+    trading_process.start()
+    trading_process.stop()
+    trading_process.start()
+    event_bus.subscribe(EventType.ORDER_REQUESTED, received_orders.append)
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+
+    assert len(event_bus._subscribers[EventType.SIGNAL_DETECTED]) == 1
+    assert len(event_bus._subscribers[EventType.ORDER_STATUS_UPDATED]) == 1
+    assert len(received_orders) == 1
 
 
 def test_trading_process_updates_average_price_when_long_reverses_to_short() -> None:

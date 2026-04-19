@@ -1,6 +1,7 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Event
 
 from data_source.csv_loader import CsvMarketDataLoader
 from data_source.kabu_api_client import KabuApiClient, KabuApiError
@@ -51,10 +52,12 @@ class ApplicationRuntime:
     csv_path: Path | None = None
     restored_snapshot: bool = False
     _started: bool = False
+    _stop_event: Event = field(default_factory=Event)
 
     def start(self) -> None:
         if self._started:
             return
+        self._stop_event.clear()
         enabled_symbols = tuple(
             symbol.code for symbol in self.config.symbols if symbol.enabled
         )
@@ -105,12 +108,22 @@ class ApplicationRuntime:
             symbol=enabled_symbol.code,
         )
 
+    def wait(self, stop_event: Event | None = None) -> None:
+        """API モードでは停止要求まで待機し、CSV モードでは即時に戻る。"""
+
+        if self.config.app.data_source_mode == DataSourceMode.CSV:
+            return
+        wait_event = stop_event or self._stop_event
+        self.logger.info("api mode runtime waiting")
+        wait_event.wait()
+
     def flush(self) -> None:
         self.persistence_process.flush()
         if self.config.app.snapshot_enabled:
             self.snapshot_process.flush()
 
     def stop(self) -> None:
+        self._stop_event.set()
         self.external_data_process.stop()
         self.trading_process.stop()
         self.signal_process.stop()
@@ -132,6 +145,7 @@ class ApplicationRuntime:
 def initialize_application(
     config_dir: Path = CONFIG_DIR,
     csv_path: Path | None = None,
+    block_api: bool = False,
 ) -> tuple[EventBus, logging.Logger]:
     """アプリケーションの最小基盤を初期化する。
 
@@ -152,8 +166,10 @@ def initialize_application(
     try:
         runtime.start()
         runtime.run_external_data()
+        if block_api:
+            runtime.wait()
         runtime.flush()
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         runtime.stop()
         raise
     runtime.logger.info(
@@ -280,7 +296,10 @@ def main() -> int:
     try:
         config = load_config(CONFIG_DIR)
         logger = setup_logger(config.app.log_level, process_name=EventSource.MAIN.value)
-        initialize_application()
+        initialize_application(block_api=True)
+    except KeyboardInterrupt:
+        logger.info("application interrupted")
+        return 0
     except ConfigLoadError:
         # 設定読込前の障害だけは、設定値を参照できないため固定レベルを使う。
         logger = setup_logger(DEFAULT_LOG_LEVEL, process_name=EventSource.MAIN.value)
