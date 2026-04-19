@@ -157,8 +157,12 @@ def test_signal_process_falls_back_to_trend_when_auto_is_configured(caplog) -> N
     assert "auto strategy is not implemented" in caplog.text
     assert slot.requested_strategy_type == StrategyType.AUTO
     assert slot.active_strategy_type == StrategyType.TREND
+    assert isinstance(slot.strategy, TrendStrategy)
     assert len(received_events) == 1
+    assert received_events[0].payload.signal_type == SignalType.BUY
     assert received_events[0].payload.strategy_type == StrategyType.TREND
+    assert received_events[0].payload.indicators[0].name == "price_delta"
+    assert received_events[0].payload.indicators[0].value == 1.0
 
 
 def test_trading_process_publishes_order_requested_from_signal() -> None:
