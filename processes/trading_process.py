@@ -39,6 +39,7 @@ class TradingProcess:
     )
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
     states: list[TradingSymbolState] = field(default_factory=list)
+    _subscribed: bool = False
 
     def __post_init__(self) -> None:
         if self.order_gateway is None:
@@ -47,11 +48,26 @@ class TradingProcess:
     def start(self) -> None:
         """SignalDetected と OrderStatusUpdated の購読を開始する。"""
 
+        if self._subscribed:
+            return
         self.event_bus.subscribe(EventType.SIGNAL_DETECTED, self.handle_signal)
         self.event_bus.subscribe(
             EventType.ORDER_STATUS_UPDATED,
             self.handle_order_status,
         )
+        self._subscribed = True
+
+    def stop(self) -> None:
+        """SignalDetected と OrderStatusUpdated の購読を解除する。"""
+
+        if not self._subscribed:
+            return
+        self.event_bus.unsubscribe(EventType.SIGNAL_DETECTED, self.handle_signal)
+        self.event_bus.unsubscribe(
+            EventType.ORDER_STATUS_UPDATED,
+            self.handle_order_status,
+        )
+        self._subscribed = False
 
     def handle_signal(self, event: BaseEvent) -> None:
         """シグナルを受けて発注要求を生成する。"""

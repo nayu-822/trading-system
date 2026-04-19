@@ -43,6 +43,47 @@ def test_validate_config_accepts_sample_config() -> None:
     validate_config(config)
 
 
+def test_validate_config_accepts_api_paper_when_token_env_exists(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    api_app = replace(
+        config.app,
+        data_source_mode=DataSourceMode.API,
+        trading_mode=TradingMode.PAPER,
+    )
+    valid_config = replace(config, app=api_app)
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "password")
+
+    validate_config(valid_config)
+
+
+def test_validate_config_rejects_api_mode_without_token_env(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    api_app = replace(
+        config.app,
+        data_source_mode=DataSourceMode.API,
+        trading_mode=TradingMode.PAPER,
+    )
+    invalid_config = replace(config, app=api_app)
+    monkeypatch.delenv(config.app.kabu_api.token_env_name, raising=False)
+
+    with pytest.raises(ConfigValidationError):
+        validate_config(invalid_config)
+
+
+def test_validate_config_rejects_api_live_mode(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    api_live_app = replace(
+        config.app,
+        data_source_mode=DataSourceMode.API,
+        trading_mode=TradingMode.LIVE,
+    )
+    invalid_config = replace(config, app=api_live_app)
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "password")
+
+    with pytest.raises(ConfigValidationError):
+        validate_config(invalid_config)
+
+
 def test_validate_config_rejects_empty_symbols() -> None:
     config = load_config(Path("config"))
     invalid_config = replace(config, symbols=[])

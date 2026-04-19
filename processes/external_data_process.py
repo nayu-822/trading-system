@@ -18,6 +18,7 @@ class ExternalDataProcess:
     push_client: PushClient | None = None
     rest_poller: RestPoller | None = None
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
+    _running_api: bool = False
 
     def run(
         self,
@@ -52,9 +53,22 @@ class ExternalDataProcess:
     def run_api(self) -> None:
         """Push / REST 由来のイベントを publish する。"""
 
+        if self._running_api:
+            return
+        self.logger.info("external data api mode starting")
         if self.push_client is not None:
             self.push_client.on_event = self.event_bus.publish
             self.push_client.start()
         if self.rest_poller is not None:
             self.rest_poller.on_event = self.event_bus.publish
             self.rest_poller.start()
+        self._running_api = True
+
+    def stop(self) -> None:
+        """Push / REST の外部データ取得を停止する。"""
+
+        if self.push_client is not None:
+            self.push_client.stop()
+        if self.rest_poller is not None:
+            self.rest_poller.stop()
+        self._running_api = False

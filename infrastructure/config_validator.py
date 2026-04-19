@@ -1,3 +1,6 @@
+import os
+
+from domain.enums import DataSourceMode, TradingMode
 from domain.models import SystemConfig
 
 LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
@@ -35,6 +38,17 @@ def _validate_app_config(config: SystemConfig) -> None:
         raise ConfigValidationError("data_source_mode は csv / api で指定してください")
     if config.app.trading_mode.value not in TRADING_MODES:
         raise ConfigValidationError("trading_mode は paper / live で指定してください")
+    if (
+        config.app.data_source_mode == DataSourceMode.API
+        and config.app.trading_mode == TradingMode.LIVE
+    ):
+        raise ConfigValidationError("API + live は未実装のため起動できません")
+    if config.app.data_source_mode == DataSourceMode.API and not os.environ.get(
+        config.app.kabu_api.token_env_name
+    ):
+        raise ConfigValidationError(
+            f"API mode requires env: {config.app.kabu_api.token_env_name}"
+        )
     if config.app.rest_poll_interval_sec <= 0:
         raise ConfigValidationError("rest_poll_interval_sec は1以上で指定してください")
     if config.app.kabu_api.timeout_sec <= 0:

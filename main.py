@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from data_source.csv_loader import CsvMarketDataLoader
@@ -34,6 +35,100 @@ DEFAULT_CSV_PATH = Path("data/market_data.csv")
 DEFAULT_LOG_LEVEL = "INFO"
 
 
+@dataclass
+class ApplicationRuntime:
+    """各プロセスの起動・停止順序を管理する。"""
+
+    config: SystemConfig
+    event_bus: EventBus
+    logger: logging.Logger
+    signal_process: SignalProcess
+    trading_process: TradingProcess
+    persistence_process: PersistenceProcess
+    snapshot_process: SnapshotProcess
+    external_data_process: ExternalDataProcess
+    clock: RealClock
+    csv_path: Path | None = None
+    restored_snapshot: bool = False
+    _started: bool = False
+
+    def start(self) -> None:
+        if self._started:
+            return
+        enabled_symbols = tuple(
+            symbol.code for symbol in self.config.symbols if symbol.enabled
+        )
+        self.logger.info(
+            "application starting mode=%s data_source_mode=%s trading_mode=%s symbols=%s",
+            self.config.app.mode.value,
+            self.config.app.data_source_mode.value,
+            self.config.app.trading_mode.value,
+            ",".join(enabled_symbols),
+        )
+        if self.config.app.recovery_enabled:
+            self.restored_snapshot = self.snapshot_process.restore()
+        self.logger.info("snapshot restore restored=%s", self.restored_snapshot)
+
+        try:
+            self.persistence_process.start()
+            if self.config.app.snapshot_enabled:
+                self.snapshot_process.start()
+            self.signal_process.start()
+            self.trading_process.start()
+            self._publish_started_event()
+            self._started = True
+        except Exception:
+            self.logger.exception("application startup failed")
+            self.stop()
+            raise
+
+    def run_external_data(self) -> None:
+        enabled_symbol = next(
+            symbol for symbol in self.config.symbols if symbol.enabled
+        )
+        if self.config.app.data_source_mode == DataSourceMode.CSV:
+            target_csv_path = self.csv_path or DEFAULT_CSV_PATH
+            if target_csv_path.exists():
+                self.external_data_process.run(
+                    data_source_mode=self.config.app.data_source_mode,
+                    csv_path=target_csv_path,
+                    symbol=enabled_symbol.code,
+                )
+            else:
+                self.logger.warning("csv data skipped path=%s", target_csv_path)
+            return
+
+        self.logger.info("api mode external data starting")
+        self.external_data_process.run(
+            data_source_mode=self.config.app.data_source_mode,
+            csv_path=None,
+            symbol=enabled_symbol.code,
+        )
+
+    def flush(self) -> None:
+        self.persistence_process.flush()
+        if self.config.app.snapshot_enabled:
+            self.snapshot_process.flush()
+
+    def stop(self) -> None:
+        self.external_data_process.stop()
+        self.trading_process.stop()
+        self.signal_process.stop()
+        self.snapshot_process.stop()
+        self.persistence_process.stop()
+        self._started = False
+
+    def _publish_started_event(self) -> None:
+        event_factory = EventFactory(source=EventSource.MAIN)
+        started_event = event_factory.create(
+            event_type=EventType.SYSTEM_STARTED,
+            timestamp=self.clock.now(),
+            symbol=None,
+            payload=SystemStartedPayload(mode=self.config.app.mode.value),
+        )
+        self.event_bus.publish(started_event)
+
+
 def initialize_application(
     config_dir: Path = CONFIG_DIR,
     csv_path: Path | None = None,
@@ -49,6 +144,32 @@ def initialize_application(
 
     config = load_config(config_dir)
     validate_config(config)
+
+    runtime = build_application_runtime(
+        config=config,
+        csv_path=csv_path,
+    )
+    try:
+        runtime.start()
+        runtime.run_external_data()
+        runtime.flush()
+    except Exception:
+        runtime.stop()
+        raise
+    runtime.logger.info(
+        "application initialized mode=%s data_source_mode=%s trading_mode=%s",
+        config.app.mode.value,
+        config.app.data_source_mode.value,
+        config.app.trading_mode.value,
+    )
+    return runtime.event_bus, runtime.logger
+
+
+def build_application_runtime(
+    config: SystemConfig,
+    csv_path: Path | None = None,
+) -> ApplicationRuntime:
+    """設定済みのプロセス群を構築する。"""
 
     logger = setup_logger(config.app.log_level, process_name=EventSource.MAIN.value)
     event_bus = EventBus()
@@ -89,51 +210,26 @@ def initialize_application(
         trading_process=trading_process,
         storage=storage,
         snapshot_path=snapshot_dir / "trading_snapshot.json",
+        event_threshold=1,
         interval_sec=config.app.snapshot_interval_sec,
     )
-    if config.app.recovery_enabled:
-        snapshot_process.restore()
-    persistence_process.start()
-    signal_process.start()
-    trading_process.start()
-    if config.app.snapshot_enabled:
-        snapshot_process.start()
-
-    event_factory = EventFactory(source=EventSource.MAIN)
-    started_event = event_factory.create(
-        event_type=EventType.SYSTEM_STARTED,
-        timestamp=clock.now(),
-        symbol=None,
-        payload=SystemStartedPayload(mode=config.app.mode.value),
-    )
-    event_bus.publish(started_event)
-
-    target_csv_path = csv_path or DEFAULT_CSV_PATH
-    enabled_symbol = next(symbol for symbol in config.symbols if symbol.enabled)
     external_data_process = _build_external_data_process(
         event_bus=event_bus,
         config=config,
         logger=logger,
     )
-    if config.app.data_source_mode == DataSourceMode.CSV and target_csv_path.exists():
-        external_data_process.run(
-            data_source_mode=config.app.data_source_mode,
-            csv_path=target_csv_path,
-            symbol=enabled_symbol.code,
-        )
-    elif config.app.data_source_mode == DataSourceMode.API:
-        external_data_process.run(
-            data_source_mode=config.app.data_source_mode,
-            csv_path=None,
-            symbol=enabled_symbol.code,
-        )
-
-    persistence_process.flush()
-    if config.app.snapshot_enabled:
-        snapshot_process.flush()
-
-    logger.info("application initialized mode=%s", config.app.mode.value)
-    return event_bus, logger
+    return ApplicationRuntime(
+        config=config,
+        event_bus=event_bus,
+        logger=logger,
+        signal_process=signal_process,
+        trading_process=trading_process,
+        persistence_process=persistence_process,
+        snapshot_process=snapshot_process,
+        external_data_process=external_data_process,
+        clock=clock,
+        csv_path=csv_path,
+    )
 
 
 def _build_external_data_process(

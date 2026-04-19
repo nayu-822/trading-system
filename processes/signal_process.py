@@ -33,11 +33,25 @@ class SignalProcess:
     )
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
     slots: list[SignalStrategySlot] = field(default_factory=list)
+    _subscribed: bool = False
 
     def start(self) -> None:
         """MarketDataUpdated の購読を開始する。"""
 
+        if self._subscribed:
+            return
         self.event_bus.subscribe(EventType.MARKET_DATA_UPDATED, self.handle_market_data)
+        self._subscribed = True
+
+    def stop(self) -> None:
+        """MarketDataUpdated の購読を解除する。"""
+
+        if not self._subscribed:
+            return
+        self.event_bus.unsubscribe(
+            EventType.MARKET_DATA_UPDATED, self.handle_market_data
+        )
+        self._subscribed = False
 
     def handle_market_data(self, event: BaseEvent) -> None:
         """市場データを銘柄別戦略へ渡し、シグナルがあれば publish する。"""
