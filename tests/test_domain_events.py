@@ -13,10 +13,12 @@ from domain.enums import (
 )
 from domain.events import (
     BaseEvent,
+    BasePayload,
     MarketDataPayload,
     MarketDataUpdated,
     OrderPayload,
     OrderRequested,
+    OrderRequestedPayload,
     SignalDetected,
     SignalPayload,
 )
@@ -41,6 +43,7 @@ def test_event_can_be_created_with_typed_payload() -> None:
 
     assert event.event_type == EventType.MARKET_DATA_UPDATED
     assert event.payload.price == 2500.0
+    assert isinstance(event.payload, BasePayload)
     with pytest.raises(FrozenInstanceError):
         event.sequence_no = 2  # type: ignore[misc]
 
@@ -90,6 +93,7 @@ def test_enum_values_are_serialized_as_strings() -> None:
     assert event_data["source"] == "trading"
     assert event_data["payload"]["side"] == "BUY"
     assert BaseEvent.from_dict(event_data).payload.side == OrderSide.BUY
+    assert isinstance(BaseEvent.from_dict(event_data).payload, OrderRequestedPayload)
 
 
 def test_event_rejects_invalid_payload_type() -> None:
@@ -106,6 +110,38 @@ def test_event_rejects_invalid_payload_type() -> None:
             },
             sequence_no=1,
         )
+
+
+def test_event_rejects_mismatched_payload_type() -> None:
+    with pytest.raises(TypeError):
+        OrderRequested(
+            timestamp=datetime(2026, 4, 18, tzinfo=timezone.utc),
+            source=EventSource.TRADING,
+            symbol="7203",
+            payload=MarketDataPayload(  # type: ignore[arg-type]
+                price=2500.0,
+                bid=2499.5,
+                ask=2500.5,
+                volume=1000,
+                timestamp=datetime(2026, 4, 18, tzinfo=timezone.utc),
+            ),
+            sequence_no=1,
+        )
+
+
+def test_event_type_matches_event_definition() -> None:
+    assert {event_type.value for event_type in EventType} >= {
+        "MarketDataUpdated",
+        "SignalDetected",
+        "OrderRequested",
+        "OrderStatusUpdated",
+        "PositionUpdated",
+        "RiskUpdated",
+        "LotUpdated",
+        "SnapshotRequested",
+        "SnapshotCreated",
+        "ErrorOccurred",
+    }
 
 
 def test_from_dict_rejects_invalid_datetime() -> None:

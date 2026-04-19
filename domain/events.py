@@ -16,23 +16,28 @@ from domain.enums import (
 )
 from domain.models import IndicatorValue
 
-PayloadT = TypeVar("PayloadT")
+PayloadT = TypeVar("PayloadT", bound="BasePayload")
 
 
 @dataclass(frozen=True)
-class EmptyPayload:
+class BasePayload:
+    """イベント payload の基底型。"""
+
+
+@dataclass(frozen=True)
+class EmptyPayload(BasePayload):
     """詳細情報を持たないイベントの payload。"""
 
 
 @dataclass(frozen=True)
-class SystemStartedPayload:
+class SystemStartedPayload(BasePayload):
     """システム起動イベントの payload。"""
 
     mode: str
 
 
 @dataclass(frozen=True)
-class MarketDataPayload:
+class MarketDataPayload(BasePayload):
     """市場データ更新イベントの payload。"""
 
     price: float
@@ -43,7 +48,7 @@ class MarketDataPayload:
 
 
 @dataclass(frozen=True)
-class SignalPayload:
+class SignalPayload(BasePayload):
     """シグナル検知イベントの payload。"""
 
     signal_type: SignalType
@@ -53,7 +58,7 @@ class SignalPayload:
 
 
 @dataclass(frozen=True)
-class OrderPayload:
+class OrderRequestedPayload(BasePayload):
     """発注要求イベントの payload。"""
 
     symbol: str
@@ -64,7 +69,7 @@ class OrderPayload:
 
 
 @dataclass(frozen=True)
-class OrderStatusPayload:
+class OrderStatusPayload(BasePayload):
     """注文状態更新イベントの payload。"""
 
     order_id: str
@@ -75,7 +80,7 @@ class OrderStatusPayload:
 
 
 @dataclass(frozen=True)
-class PositionPayload:
+class PositionPayload(BasePayload):
     """建玉更新イベントの payload。"""
 
     symbol: str
@@ -86,7 +91,7 @@ class PositionPayload:
 
 
 @dataclass(frozen=True)
-class RiskPayload:
+class RiskPayload(BasePayload):
     """リスク状態更新イベントの payload。"""
 
     current_exposure: float
@@ -95,7 +100,7 @@ class RiskPayload:
 
 
 @dataclass(frozen=True)
-class LotPayload:
+class LotPayload(BasePayload):
     """ロット状態更新イベントの payload。"""
 
     current_lot: int
@@ -104,14 +109,14 @@ class LotPayload:
 
 
 @dataclass(frozen=True)
-class SnapshotRequestPayload:
+class SnapshotRequestedPayload(BasePayload):
     """スナップショット要求イベントの payload。"""
 
     target: str
 
 
 @dataclass(frozen=True)
-class SnapshotCreatedPayload:
+class SnapshotCreatedPayload(BasePayload):
     """スナップショット作成完了イベントの payload。"""
 
     snapshot_id: str
@@ -120,7 +125,7 @@ class SnapshotCreatedPayload:
 
 
 @dataclass(frozen=True)
-class ErrorPayload:
+class ErrorPayload(BasePayload):
     """エラー通知イベントの payload。"""
 
     error_type: str
@@ -220,8 +225,8 @@ class BaseEvent(Generic[PayloadT]):
             raise TypeError("source は EventSource で指定してください")
         if self.sequence_no < 1:
             raise ValueError("sequence_no は1以上で指定してください")
-        if not is_dataclass(self.payload):
-            raise TypeError("payload は dataclass で指定してください")
+        if not isinstance(self.payload, BasePayload) or not is_dataclass(self.payload):
+            raise TypeError("payload は BasePayload の dataclass で指定してください")
         expected_payload_type = self._payload_classes.get(self.event_type)
         if expected_payload_type is not None and not isinstance(
             self.payload, expected_payload_type
@@ -281,9 +286,9 @@ class SignalDetected(BaseEvent[SignalPayload]):
 
 
 @dataclass(frozen=True, kw_only=True)
-class OrderRequested(BaseEvent[OrderPayload]):
+class OrderRequested(BaseEvent[OrderRequestedPayload]):
     event_type: EventType = field(default=EventType.ORDER_REQUESTED, init=False)
-    payload: OrderPayload
+    payload: OrderRequestedPayload
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -311,9 +316,9 @@ class LotUpdated(BaseEvent[LotPayload]):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SnapshotRequested(BaseEvent[SnapshotRequestPayload]):
+class SnapshotRequested(BaseEvent[SnapshotRequestedPayload]):
     event_type: EventType = field(default=EventType.SNAPSHOT_REQUESTED, init=False)
-    payload: SnapshotRequestPayload
+    payload: SnapshotRequestedPayload
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -346,15 +351,18 @@ BaseEvent._payload_classes = {
     EventType.SYSTEM_STARTED: SystemStartedPayload,
     EventType.MARKET_DATA_UPDATED: MarketDataPayload,
     EventType.SIGNAL_DETECTED: SignalPayload,
-    EventType.ORDER_REQUESTED: OrderPayload,
+    EventType.ORDER_REQUESTED: OrderRequestedPayload,
     EventType.ORDER_STATUS_UPDATED: OrderStatusPayload,
     EventType.POSITION_UPDATED: PositionPayload,
     EventType.RISK_UPDATED: RiskPayload,
     EventType.LOT_UPDATED: LotPayload,
-    EventType.SNAPSHOT_REQUESTED: SnapshotRequestPayload,
+    EventType.SNAPSHOT_REQUESTED: SnapshotRequestedPayload,
     EventType.SNAPSHOT_CREATED: SnapshotCreatedPayload,
     EventType.ERROR_OCCURRED: ErrorPayload,
 }
+
+OrderPayload = OrderRequestedPayload
+SnapshotRequestPayload = SnapshotRequestedPayload
 
 
 @dataclass

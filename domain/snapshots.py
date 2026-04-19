@@ -5,7 +5,16 @@ from domain.enums import SignalType, StrategyType
 
 
 @dataclass(frozen=True)
-class SignalSnapshot:
+class BaseSnapshot:
+    """スナップショット共通メタ情報。"""
+
+    version: int
+    created_at: datetime
+    sequence_no: int
+
+
+@dataclass(frozen=True)
+class SignalSnapshot(BaseSnapshot):
     """signal_process の復元に必要な最小状態。"""
 
     symbol: str
@@ -15,7 +24,7 @@ class SignalSnapshot:
 
 
 @dataclass(frozen=True)
-class TradingSnapshot:
+class TradingSnapshot(BaseSnapshot):
     """trading_process の復元に必要な最小状態。"""
 
     symbol: str
