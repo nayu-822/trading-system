@@ -18,6 +18,7 @@ def test_signal_snapshot_has_common_metadata() -> None:
     assert isinstance(snapshot, BaseSnapshot)
     assert snapshot.version == 1
     assert snapshot.sequence_no == 10
+    assert snapshot.updated_at == datetime(2026, 4, 18, tzinfo=timezone.utc)
 
 
 def test_trading_snapshot_has_common_metadata() -> None:
@@ -33,5 +34,8 @@ def test_trading_snapshot_has_common_metadata() -> None:
     )
 
     assert isinstance(snapshot, BaseSnapshot)
+    assert snapshot.version == 1
+    assert snapshot.sequence_no == 20
+    assert snapshot.updated_at == datetime(2026, 4, 18, tzinfo=timezone.utc)
     assert snapshot.symbol == "7203"
     assert snapshot.current_lot == 100
