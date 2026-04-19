@@ -372,6 +372,12 @@ class EventFactory:
     source: EventSource
     _sequence_no: int = 0
 
+    @property
+    def sequence_no(self) -> int:
+        """譛蠕後↓逕滓・縺励◆ sequence_no 繧定ｿ斐☆縲・"""
+
+        return self._sequence_no
+
     def create(
         self,
         event_type: EventType,

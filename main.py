@@ -9,9 +9,12 @@ from infrastructure.clock import RealClock
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
 from infrastructure.event_bus import EventBus
+from infrastructure.file_storage import FileStorage
 from infrastructure.logger import setup_logger
 from processes.external_data_process import ExternalDataProcess
+from processes.persistence_process import PersistenceProcess
 from processes.signal_process import SignalProcess
+from processes.snapshot_process import SnapshotProcess
 from processes.trading_process import TradingProcess
 
 CONFIG_DIR = Path("config")
@@ -38,6 +41,8 @@ def initialize_application(
     logger = setup_logger(config.app.log_level, process_name=EventSource.MAIN.value)
     event_bus = EventBus()
     clock = RealClock()
+    storage = FileStorage()
+    snapshot_dir = Path(config.app.snapshot_dir)
     signal_process = SignalProcess(
         event_bus=event_bus,
         strategy_configs=tuple(
@@ -61,8 +66,25 @@ def initialize_application(
             if symbol.enabled
         ),
     )
+    persistence_process = PersistenceProcess(
+        event_bus=event_bus,
+        storage=storage,
+        event_log_path=snapshot_dir / "events.jsonl",
+    )
+    snapshot_process = SnapshotProcess(
+        event_bus=event_bus,
+        trading_process=trading_process,
+        storage=storage,
+        snapshot_path=snapshot_dir / "trading_snapshot.json",
+        interval_sec=config.app.snapshot_interval_sec,
+    )
+    if config.app.recovery_enabled:
+        snapshot_process.restore()
+    persistence_process.start()
     signal_process.start()
     trading_process.start()
+    if config.app.snapshot_enabled:
+        snapshot_process.start()
 
     event_factory = EventFactory(source=EventSource.MAIN)
     started_event = event_factory.create(
@@ -84,6 +106,10 @@ def initialize_application(
             csv_path=target_csv_path,
             symbol=enabled_symbol.code,
         )
+
+    persistence_process.flush()
+    if config.app.snapshot_enabled:
+        snapshot_process.flush()
 
     logger.info("application initialized mode=%s", config.app.mode.value)
     return event_bus, logger

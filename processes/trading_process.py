@@ -13,6 +13,12 @@ from domain.events import (
     SignalDetected,
 )
 from domain.models import Order, Position, TradingSymbolConfig, TradingSymbolState
+from domain.snapshots import (
+    OrderSnapshot,
+    PositionStateSnapshot,
+    TradingStateSnapshot,
+    TradingSymbolStateSnapshot,
+)
 from infrastructure.event_bus import EventBus
 
 
@@ -164,11 +170,83 @@ class TradingProcess:
         self.states.append(state)
         return state
 
+    def get_snapshot(self, timestamp: datetime) -> TradingStateSnapshot:
+        """現在の売買状態を復旧用スナップショットへ変換する。"""
+
+        return TradingStateSnapshot(
+            version=1,
+            created_at=timestamp,
+            updated_at=timestamp,
+            sequence_no=self.event_factory.sequence_no,
+            symbols=tuple(self._state_to_snapshot(state) for state in self.states),
+        )
+
+    def restore_snapshot(self, snapshot: TradingStateSnapshot) -> None:
+        """復旧用スナップショットから内部状態を復元する。"""
+
+        self.states = [
+            TradingSymbolState(
+                symbol=symbol_state.symbol,
+                lot_size=symbol_state.lot_size,
+                position=Position(
+                    symbol=symbol_state.position.symbol,
+                    quantity=symbol_state.position.quantity,
+                    average_price=symbol_state.position.average_price,
+                ),
+                orders=[
+                    Order(
+                        order_id=order.order_id,
+                        symbol=order.symbol,
+                        side=order.side,
+                        quantity=order.quantity,
+                        order_type=order.order_type,
+                        status=order.status,
+                        price=order.price,
+                        filled_quantity=order.filled_quantity,
+                        remaining_quantity=order.remaining_quantity,
+                        avg_price=order.avg_price,
+                    )
+                    for order in symbol_state.orders
+                ],
+            )
+            for symbol_state in snapshot.symbols
+        ]
+
     def _resolve_lot_size(self, symbol: str) -> int:
         for lot_config in self.lot_configs:
             if lot_config.symbol == symbol:
                 return lot_config.lot_size
         return self.order_quantity
+
+    def _state_to_snapshot(
+        self,
+        state: TradingSymbolState,
+    ) -> TradingSymbolStateSnapshot:
+        position = self._ensure_position(state)
+        return TradingSymbolStateSnapshot(
+            symbol=state.symbol,
+            lot_size=state.lot_size,
+            position=PositionStateSnapshot(
+                symbol=position.symbol,
+                quantity=position.quantity,
+                average_price=position.average_price,
+            ),
+            orders=tuple(
+                OrderSnapshot(
+                    order_id=order.order_id,
+                    symbol=order.symbol,
+                    side=order.side,
+                    quantity=order.quantity,
+                    order_type=order.order_type,
+                    status=order.status,
+                    price=order.price,
+                    filled_quantity=order.filled_quantity,
+                    remaining_quantity=order.remaining_quantity,
+                    avg_price=order.avg_price,
+                )
+                for order in state.orders
+            ),
+        )
 
     def _has_open_order(self, state: TradingSymbolState) -> bool:
         incomplete_statuses = {

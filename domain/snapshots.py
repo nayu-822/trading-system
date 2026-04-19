@@ -1,7 +1,10 @@
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime
+from enum import Enum
+from typing import Any
 
-from domain.enums import SignalType, StrategyType
+from domain.enums import OrderSide, OrderStatus, SignalType, StrategyType
 
 
 @dataclass(frozen=True)
@@ -12,6 +15,14 @@ class BaseSnapshot:
     created_at: datetime
     updated_at: datetime
     sequence_no: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """保存用の辞書へ変換する。"""
+
+        return {
+            item.name: _serialize_value(getattr(self, item.name))
+            for item in fields(self)
+        }
 
 
 @dataclass(frozen=True)
@@ -31,3 +42,113 @@ class TradingSnapshot(BaseSnapshot):
     position_quantity: int
     avg_price: float
     current_lot: int
+
+
+@dataclass(frozen=True)
+class OrderSnapshot:
+    """復旧に必要な注文状態。"""
+
+    order_id: str
+    symbol: str
+    side: OrderSide
+    quantity: int
+    order_type: str
+    status: OrderStatus
+    price: float | None
+    filled_quantity: int
+    remaining_quantity: int
+    avg_price: float | None
+
+
+@dataclass(frozen=True)
+class PositionStateSnapshot:
+    """復旧に必要な建玉状態。"""
+
+    symbol: str
+    quantity: int
+    average_price: float
+
+
+@dataclass(frozen=True)
+class TradingSymbolStateSnapshot:
+    """銘柄単位の売買状態。"""
+
+    symbol: str
+    lot_size: int
+    position: PositionStateSnapshot
+    orders: tuple[OrderSnapshot, ...]
+
+
+@dataclass(frozen=True)
+class TradingStateSnapshot(BaseSnapshot):
+    """trading_process 全体の復旧用スナップショット。"""
+
+    symbols: tuple[TradingSymbolStateSnapshot, ...]
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "TradingStateSnapshot":
+        """保存済み JSON 由来の辞書から復元する。"""
+
+        symbols_data = data["symbols"]
+        if not isinstance(symbols_data, list):
+            raise TypeError("symbols must be list")
+        return cls(
+            version=int(data["version"]),
+            created_at=datetime.fromisoformat(str(data["created_at"])),
+            updated_at=datetime.fromisoformat(str(data["updated_at"])),
+            sequence_no=int(data["sequence_no"]),
+            symbols=tuple(_symbol_snapshot_from_dict(item) for item in symbols_data),
+        )
+
+
+def _serialize_value(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if is_dataclass(value):
+        return {
+            item.name: _serialize_value(getattr(value, item.name))
+            for item in fields(value)
+        }
+    if isinstance(value, tuple):
+        return [_serialize_value(item) for item in value]
+    if isinstance(value, list):
+        return [_serialize_value(item) for item in value]
+    return value
+
+
+def _symbol_snapshot_from_dict(data: Mapping[str, Any]) -> TradingSymbolStateSnapshot:
+    position_data = data["position"]
+    orders_data = data["orders"]
+    if not isinstance(position_data, Mapping):
+        raise TypeError("position must be object")
+    if not isinstance(orders_data, list):
+        raise TypeError("orders must be list")
+    return TradingSymbolStateSnapshot(
+        symbol=str(data["symbol"]),
+        lot_size=int(data["lot_size"]),
+        position=PositionStateSnapshot(
+            symbol=str(position_data["symbol"]),
+            quantity=int(position_data["quantity"]),
+            average_price=float(position_data["average_price"]),
+        ),
+        orders=tuple(_order_snapshot_from_dict(item) for item in orders_data),
+    )
+
+
+def _order_snapshot_from_dict(data: Mapping[str, Any]) -> OrderSnapshot:
+    return OrderSnapshot(
+        order_id=str(data["order_id"]),
+        symbol=str(data["symbol"]),
+        side=OrderSide(str(data["side"])),
+        quantity=int(data["quantity"]),
+        order_type=str(data["order_type"]),
+        status=OrderStatus(str(data["status"])),
+        price=float(data["price"]) if data.get("price") is not None else None,
+        filled_quantity=int(data["filled_quantity"]),
+        remaining_quantity=int(data["remaining_quantity"]),
+        avg_price=(
+            float(data["avg_price"]) if data.get("avg_price") is not None else None
+        ),
+    )
