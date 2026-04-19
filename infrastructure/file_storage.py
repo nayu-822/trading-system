@@ -1,4 +1,5 @@
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -20,10 +21,10 @@ class FileStorage:
 
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = path.with_suffix(f"{path.suffix}.tmp")
-        temporary_path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        with temporary_path.open("w", encoding="utf-8") as file:
+            file.write(json.dumps(data, ensure_ascii=False, indent=2))
+            file.flush()
+            os.fsync(file.fileno())
         temporary_path.replace(path)
 
     def read_json(self, path: Path) -> Mapping[str, Any] | None:

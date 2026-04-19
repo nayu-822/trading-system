@@ -21,6 +21,7 @@ class PersistenceProcess:
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
     _queue: Queue[BaseEvent[Any] | None] = field(default_factory=Queue, init=False)
     _worker: Thread | None = field(default=None, init=False)
+    _subscribed: bool = False
 
     def start(self) -> None:
         """永続化対象イベントの購読と worker を開始する。"""
@@ -28,18 +29,23 @@ class PersistenceProcess:
         if self._worker is None:
             self._worker = Thread(target=self._run, daemon=True)
             self._worker.start()
-        for event_type in self._event_types():
-            self.event_bus.subscribe(event_type, self.enqueue)
+        if not self._subscribed:
+            for event_type in self._event_types():
+                self.event_bus.subscribe(event_type, self.enqueue)
+            self._subscribed = True
 
     def stop(self) -> None:
         """worker を停止し、未保存イベントを処理しきる。"""
 
-        if self._worker is None:
-            return
-        self._queue.put(None)
-        self._queue.join()
-        self._worker.join(timeout=5)
-        self._worker = None
+        if self._subscribed:
+            for event_type in self._event_types():
+                self.event_bus.unsubscribe(event_type, self.enqueue)
+            self._subscribed = False
+        if self._worker is not None:
+            self._queue.put(None)
+            self._queue.join()
+            self._worker.join(timeout=5)
+            self._worker = None
 
     def flush(self) -> None:
         """テストや終了処理でキューの処理完了を待つ。"""
@@ -69,4 +75,10 @@ class PersistenceProcess:
             EventType.SIGNAL_DETECTED,
             EventType.ORDER_REQUESTED,
             EventType.ORDER_STATUS_UPDATED,
+            EventType.POSITION_UPDATED,
+            EventType.RISK_UPDATED,
+            EventType.LOT_UPDATED,
+            EventType.SNAPSHOT_REQUESTED,
+            EventType.SNAPSHOT_CREATED,
+            EventType.ERROR_OCCURRED,
         )

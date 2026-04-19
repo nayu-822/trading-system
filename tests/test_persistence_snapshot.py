@@ -4,10 +4,13 @@ from pathlib import Path
 from domain.enums import EventSource, EventType, OrderSide, SignalType, StrategyType
 from domain.events import (
     BaseEvent,
+    ErrorOccurred,
+    ErrorPayload,
     EventFactory,
     MarketDataPayload,
     OrderRequested,
     OrderRequestedPayload,
+    PositionPayload,
     SignalPayload,
 )
 from domain.models import Position, TradingSymbolState
@@ -42,6 +45,53 @@ def test_persistence_process_saves_event_to_json_lines() -> None:
     assert "1000.0" in lines[0]
 
 
+def test_persistence_process_saves_state_and_error_events() -> None:
+    event_bus = EventBus()
+    event_log_path = _test_file_path("state_error_events.jsonl")
+    _remove_file(event_log_path)
+    persistence_process = PersistenceProcess(
+        event_bus=event_bus,
+        storage=FileStorage(),
+        event_log_path=event_log_path,
+    )
+
+    persistence_process.start()
+    event_bus.publish(_create_position_updated_event())
+    event_bus.publish(_create_error_event())
+    persistence_process.flush()
+    persistence_process.stop()
+
+    lines = event_log_path.read_text(encoding="utf-8").splitlines()
+    _remove_file(event_log_path)
+
+    assert len(lines) == 2
+    assert "PositionUpdated" in lines[0]
+    assert "ErrorOccurred" in lines[1]
+
+
+def test_persistence_process_does_not_duplicate_after_restart() -> None:
+    event_bus = EventBus()
+    event_log_path = _test_file_path("restart_events.jsonl")
+    _remove_file(event_log_path)
+    persistence_process = PersistenceProcess(
+        event_bus=event_bus,
+        storage=FileStorage(),
+        event_log_path=event_log_path,
+    )
+
+    persistence_process.start()
+    persistence_process.stop()
+    persistence_process.start()
+    event_bus.publish(_create_market_data_event(price=1000.0))
+    persistence_process.flush()
+    persistence_process.stop()
+
+    lines = event_log_path.read_text(encoding="utf-8").splitlines()
+    _remove_file(event_log_path)
+
+    assert len(lines) == 1
+
+
 def test_snapshot_process_saves_trading_snapshot() -> None:
     event_bus = EventBus()
     snapshot_path = _test_file_path("trading_snapshot_save.json")
@@ -71,6 +121,29 @@ def test_snapshot_process_saves_trading_snapshot() -> None:
     assert saved_data["version"] == 1
     assert saved_data["symbols"][0]["symbol"] == "7203"
     assert saved_data["symbols"][0]["position"]["quantity"] == 100
+
+
+def test_snapshot_process_does_not_duplicate_after_restart() -> None:
+    event_bus = EventBus()
+    snapshot_path = _test_file_path("trading_snapshot_restart.json")
+    _remove_file(snapshot_path)
+    trading_process = TradingProcess(event_bus=event_bus)
+    snapshot_process = SnapshotProcess(
+        event_bus=event_bus,
+        trading_process=trading_process,
+        storage=FileStorage(),
+        snapshot_path=snapshot_path,
+        event_threshold=2,
+    )
+
+    snapshot_process.start()
+    snapshot_process.stop()
+    snapshot_process.start()
+    event_bus.publish(_create_order_requested_event())
+
+    assert snapshot_process._event_count == 1
+    snapshot_process.stop()
+    _remove_file(snapshot_path)
 
 
 def test_trading_process_restores_snapshot() -> None:
@@ -171,6 +244,34 @@ def _create_order_requested_event() -> BaseEvent:
             order_type="MARKET",
             price=None,
         ),
+    )
+
+
+def _create_position_updated_event() -> BaseEvent:
+    return EventFactory(source=EventSource.TRADING).create(
+        event_type=EventType.POSITION_UPDATED,
+        timestamp=_timestamp(),
+        symbol="7203",
+        payload=PositionPayload(
+            symbol="7203",
+            quantity=100,
+            avg_price=1000.0,
+            realized_pnl=None,
+            unrealized_pnl=None,
+        ),
+    )
+
+
+def _create_error_event() -> BaseEvent:
+    return ErrorOccurred(
+        timestamp=_timestamp(),
+        source=EventSource.TRADING,
+        symbol=None,
+        payload=ErrorPayload(
+            error_type="TEST",
+            message="test error",
+        ),
+        sequence_no=1,
     )
 
 

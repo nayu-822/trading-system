@@ -30,6 +30,7 @@ class SnapshotProcess:
         default_factory=Queue, init=False
     )
     _worker: Thread | None = field(default=None, init=False)
+    _subscribed: bool = False
 
     def start(self) -> None:
         """スナップショット対象イベントの購読と worker を開始する。"""
@@ -37,18 +38,23 @@ class SnapshotProcess:
         if self._worker is None:
             self._worker = Thread(target=self._run, daemon=True)
             self._worker.start()
-        for event_type in self._event_types():
-            self.event_bus.subscribe(event_type, self.handle_event)
+        if not self._subscribed:
+            for event_type in self._event_types():
+                self.event_bus.subscribe(event_type, self.handle_event)
+            self._subscribed = True
 
     def stop(self) -> None:
         """worker を停止し、保存キューを処理しきる。"""
 
-        if self._worker is None:
-            return
-        self._queue.put(None)
-        self._queue.join()
-        self._worker.join(timeout=5)
-        self._worker = None
+        if self._subscribed:
+            for event_type in self._event_types():
+                self.event_bus.unsubscribe(event_type, self.handle_event)
+            self._subscribed = False
+        if self._worker is not None:
+            self._queue.put(None)
+            self._queue.join()
+            self._worker.join(timeout=5)
+            self._worker = None
 
     def flush(self) -> None:
         """テストや終了処理でキューの処理完了を待つ。"""
