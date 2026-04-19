@@ -310,6 +310,60 @@ def test_trading_process_updates_position_from_order_status() -> None:
     assert state.position.average_price == 1000.0
 
 
+def test_trading_process_updates_average_price_when_long_reverses_to_short() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=200,
+        auto_fill_orders=False,
+    )
+    state = trading_process.get_state("7203")
+    assert state.position is not None
+    state.position.quantity = 100
+    state.position.average_price = 1000.0
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.SELL))
+    order = state.orders[0]
+    event_bus.publish(
+        _create_order_status_event(
+            order_id=order.order_id,
+            filled_quantity=200,
+            avg_price=1100.0,
+        )
+    )
+
+    assert state.position.quantity == -100
+    assert state.position.average_price == 1100.0
+
+
+def test_trading_process_updates_average_price_when_short_reverses_to_long() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=200,
+        auto_fill_orders=False,
+    )
+    state = trading_process.get_state("7203")
+    assert state.position is not None
+    state.position.quantity = -100
+    state.position.average_price = 1000.0
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    order = state.orders[0]
+    event_bus.publish(
+        _create_order_status_event(
+            order_id=order.order_id,
+            filled_quantity=200,
+            avg_price=900.0,
+        )
+    )
+
+    assert state.position.quantity == 100
+    assert state.position.average_price == 900.0
+
+
 def test_csv_event_flow_publishes_order_requested_end_to_end() -> None:
     event_bus = EventBus()
     signal_process = SignalProcess(event_bus=event_bus)
@@ -341,3 +395,23 @@ def _find_strategy_slot(
         if slot.symbol == symbol:
             return slot
     raise AssertionError(f"strategy slot was not found: {symbol}")
+
+
+def _create_order_status_event(
+    order_id: str,
+    filled_quantity: int,
+    avg_price: float,
+) -> BaseEvent[Any]:
+    timestamp = datetime(2026, 4, 18, tzinfo=timezone.utc)
+    return EventFactory(source=EventSource.TRADING).create(
+        event_type=EventType.ORDER_STATUS_UPDATED,
+        timestamp=timestamp,
+        symbol="7203",
+        payload=OrderStatusPayload(
+            order_id=order_id,
+            status=OrderStatus.FILLED,
+            filled_quantity=filled_quantity,
+            remaining_quantity=0,
+            avg_price=avg_price,
+        ),
+    )

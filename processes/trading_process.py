@@ -254,17 +254,24 @@ class TradingProcess:
         )
         before_quantity = position.quantity
         after_quantity = before_quantity + signed_quantity
-        if before_quantity == 0 or self._is_same_direction(
+        if after_quantity == 0:
+            position.average_price = 0.0
+        elif before_quantity == 0 or self._is_same_direction(
             before_quantity, signed_quantity
         ):
             total_cost = abs(before_quantity) * position.average_price
             total_cost += filled_quantity * avg_price
             position.average_price = total_cost / abs(after_quantity)
-        elif after_quantity == 0:
-            position.average_price = 0.0
+        elif self._is_reversed(before_quantity, after_quantity):
+            position.average_price = avg_price
         position.quantity = after_quantity
 
     def _is_same_direction(self, current_quantity: int, add_quantity: int) -> bool:
         return (current_quantity > 0 and add_quantity > 0) or (
             current_quantity < 0 and add_quantity < 0
+        )
+
+    def _is_reversed(self, before_quantity: int, after_quantity: int) -> bool:
+        return (before_quantity > 0 and after_quantity < 0) or (
+            before_quantity < 0 and after_quantity > 0
         )
