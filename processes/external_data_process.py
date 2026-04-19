@@ -56,5 +56,5 @@ class ExternalDataProcess:
             self.push_client.on_event = self.event_bus.publish
             self.push_client.start()
         if self.rest_poller is not None:
-            for event in self.rest_poller.poll_once():
-                self.event_bus.publish(event)
+            self.rest_poller.on_event = self.event_bus.publish
+            self.rest_poller.start()

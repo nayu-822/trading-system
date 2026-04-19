@@ -15,7 +15,10 @@ MarketDataHandler = Callable[[MarketDataUpdated], None]
 
 @dataclass
 class PushClient:
-    """Push API の受信メッセージを市場データイベントへ変換する。"""
+    """Push API の受信メッセージを市場データイベントへ変換する。
+
+    実 WebSocket 接続は標準ライブラリだけで安全に扱わず、connector 注入で行う。
+    """
 
     config: KabuApiConfig
     on_event: MarketDataHandler | None = None
@@ -30,10 +33,13 @@ class PushClient:
     def start(self) -> None:
         """Push 接続を開始する。connector はテストや実装差し替え用。"""
 
-        self.running = True
         if self.connector is None:
-            self.logger.info("push connector is not configured")
+            self.running = False
+            self.logger.warning(
+                "push connector is not configured; inject WebSocket connector to receive Push API data"
+            )
             return
+        self.running = True
         for attempt in range(1, self.reconnect_attempts + 1):
             try:
                 self.connector(self)
