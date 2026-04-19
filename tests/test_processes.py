@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from data_source.csv_loader import CsvMarketDataLoader
+from data_source.kabu_api_client import KabuApiError
 from domain.enums import (
     DataSourceMode,
     EventSource,
@@ -22,7 +23,12 @@ from domain.events import (
     SignalDetected,
     SignalPayload,
 )
-from domain.models import SignalStrategyConfig, TradingSymbolConfig
+from domain.models import (
+    KabuOrderRequest,
+    KabuOrderResult,
+    SignalStrategyConfig,
+    TradingSymbolConfig,
+)
 from infrastructure.event_bus import EventBus
 from processes.external_data_process import ExternalDataProcess
 from processes.signal_process import SignalProcess, SignalStrategySlot
@@ -360,23 +366,35 @@ def test_trading_process_uses_gateway_without_direct_fill() -> None:
     assert received_statuses[0].payload.status == OrderStatus.FILLED
 
 
-def test_trading_process_handles_unimplemented_live_gateway_safely(caplog) -> None:
+def test_trading_process_handles_live_gateway_failure_safely(caplog) -> None:
+    class FailingApiClient:
+        def send_order(
+            self,
+            token: str,
+            order_request: KabuOrderRequest,
+        ) -> KabuOrderResult:
+            raise KabuApiError("api failed")
+
     event_bus = EventBus()
     trading_process = TradingProcess(
         event_bus=event_bus,
         order_quantity=100,
-        order_gateway=LiveOrderGateway(),
+        order_gateway=LiveOrderGateway(
+            api_client=FailingApiClient(),  # type: ignore[arg-type]
+            token="token-1",
+            allowed_symbols=("7203",),
+        ),
     )
     received_statuses: list[BaseEvent[Any]] = []
 
     trading_process.start()
     event_bus.subscribe(EventType.ORDER_STATUS_UPDATED, received_statuses.append)
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("ERROR"):
         event_bus.publish(_create_signal_event(SignalType.BUY))
 
     state = trading_process.get_state("7203")
 
-    assert "order gateway is not implemented" in caplog.text
+    assert "order gateway failed" in caplog.text
     assert received_statuses == []
     assert state.position is not None
     assert state.position.quantity == 0

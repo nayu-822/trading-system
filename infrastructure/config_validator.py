@@ -14,14 +14,7 @@ class ConfigValidationError(Exception):
 
 
 def validate_config(config: SystemConfig) -> None:
-    """必須項目と値の整合性を検証する。
-
-    Args:
-        config: 検証対象の統合設定。
-
-    Returns:
-        なし。
-    """
+    """必須項目と値の整合性を検証する。"""
 
     _validate_app_config(config)
     _validate_symbols(config)
@@ -39,10 +32,12 @@ def _validate_app_config(config: SystemConfig) -> None:
     if config.app.trading_mode.value not in TRADING_MODES:
         raise ConfigValidationError("trading_mode は paper / live で指定してください")
     if (
-        config.app.data_source_mode == DataSourceMode.API
-        and config.app.trading_mode == TradingMode.LIVE
+        config.app.trading_mode == TradingMode.LIVE
+        and config.app.data_source_mode != DataSourceMode.API
     ):
-        raise ConfigValidationError("API + live は未実装のため起動できません")
+        raise ConfigValidationError("live mode requires api data_source_mode")
+    if config.app.trading_mode == TradingMode.LIVE and not config.app.live_enabled:
+        raise ConfigValidationError("live mode requires live_enabled=true")
     if config.app.data_source_mode == DataSourceMode.API and not os.environ.get(
         config.app.kabu_api.token_env_name
     ):

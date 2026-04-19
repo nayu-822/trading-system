@@ -173,6 +173,7 @@ def _build_app_config(data: dict[str, Any]) -> AppConfig:
     return AppConfig(
         mode=RunMode(str(data["mode"])),
         trading_mode=TradingMode(str(data.get("trading_mode", "paper"))),
+        live_enabled=bool(data.get("live_enabled", False)),
         data_source_mode=DataSourceMode(str(data.get("data_source_mode", "csv"))),
         log_level=str(data["log_level"]).upper(),
         rest_poll_interval_sec=int(data["rest_poll_interval_sec"]),

@@ -104,11 +104,36 @@ class KabuMarketData:
 
 
 @dataclass(frozen=True)
+class KabuOrderRequest:
+    """kabu API へ送信する最小注文構造。"""
+
+    order_id: str
+    symbol: str
+    side: OrderSide
+    quantity: int
+    order_type: str
+    price: float | None
+
+
+@dataclass(frozen=True)
+class KabuOrderResult:
+    """kabu API の注文送信結果を表す構造化モデル。"""
+
+    order_id: str
+    symbol: str
+    status: OrderStatus
+    filled_quantity: int
+    remaining_quantity: int
+    avg_price: float | None
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """システム全体の設定モデル。"""
 
     mode: RunMode
     trading_mode: TradingMode
+    live_enabled: bool
     data_source_mode: DataSourceMode
     log_level: str
     rest_poll_interval_sec: int

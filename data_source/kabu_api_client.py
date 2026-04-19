@@ -6,8 +6,13 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib import request
 
-from domain.enums import OrderStatus
-from domain.models import KabuApiConfig, KabuOrderStatus
+from domain.enums import OrderSide, OrderStatus
+from domain.models import (
+    KabuApiConfig,
+    KabuOrderRequest,
+    KabuOrderResult,
+    KabuOrderStatus,
+)
 
 HttpRequest = Callable[[str, str, Mapping[str, str], bytes | None, int], bytes]
 
@@ -74,6 +79,36 @@ class KabuApiClient:
                 raise
             raise KabuApiError("kabu orders request failed") from error
 
+    def send_order(
+        self,
+        token: str,
+        order_request: KabuOrderRequest,
+    ) -> KabuOrderResult:
+        """成行注文を送信し、API 応答を構造化モデルへ変換する。"""
+
+        try:
+            response = self._request_json(
+                method="POST",
+                path="/sendorder",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-API-KEY": token,
+                },
+                body=_to_send_order_body(order_request),
+            )
+            if not isinstance(response, Mapping):
+                raise KabuApiError("send order response must be object")
+            return _to_order_result(order_request=order_request, data=response)
+        except Exception as error:
+            self.logger.exception(
+                "kabu send order failed order_id=%s symbol=%s",
+                order_request.order_id,
+                order_request.symbol,
+            )
+            if isinstance(error, KabuApiError):
+                raise
+            raise KabuApiError("kabu send order failed") from error
+
     def _request_json(
         self,
         method: str,
@@ -126,6 +161,65 @@ def _default_http_request(
     )
     with request.urlopen(api_request, timeout=timeout_sec) as response:
         return response.read()
+
+
+def _to_send_order_body(order_request: KabuOrderRequest) -> Mapping[str, Any]:
+    order_type = order_request.order_type.upper()
+    if order_type != "MARKET":
+        raise KabuApiError(f"unsupported order_type={order_request.order_type}")
+    if order_request.quantity <= 0:
+        raise KabuApiError("order quantity must be positive")
+    return {
+        "Symbol": order_request.symbol,
+        "Side": _to_kabu_side(order_request.side),
+        "Qty": order_request.quantity,
+        "OrdType": order_type,
+        "Price": order_request.price,
+    }
+
+
+def _to_kabu_side(side: OrderSide) -> str:
+    if side == OrderSide.BUY:
+        return "BUY"
+    if side == OrderSide.SELL:
+        return "SELL"
+    raise KabuApiError(f"unsupported order side={side.value}")
+
+
+def _to_order_result(
+    order_request: KabuOrderRequest,
+    data: Mapping[str, Any],
+) -> KabuOrderResult:
+    status_value = _pick_optional(data, "status", "Status", "State")
+    remaining_value = _pick_optional(
+        data,
+        "remaining_quantity",
+        "RemainingQuantity",
+        "LeavesQty",
+    )
+    return KabuOrderResult(
+        order_id=str(
+            _pick_optional(data, "order_id", "OrderID", "ID", "id")
+            or order_request.order_id
+        ),
+        symbol=str(_pick_optional(data, "symbol", "Symbol") or order_request.symbol),
+        status=(
+            _to_order_status(status_value)
+            if status_value is not None
+            else OrderStatus.REQUESTED
+        ),
+        filled_quantity=_to_int(
+            _pick_optional(data, "filled_quantity", "FilledQuantity", "CumQty")
+        ),
+        remaining_quantity=(
+            _to_int(remaining_value)
+            if remaining_value is not None
+            else order_request.quantity
+        ),
+        avg_price=_to_optional_float(
+            _pick_optional(data, "avg_price", "AvgPrice", "Price")
+        ),
+    )
 
 
 def _pick(data: Mapping[str, Any], *keys: str) -> Any:

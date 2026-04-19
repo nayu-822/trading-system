@@ -13,6 +13,7 @@ def test_load_config_returns_structured_model() -> None:
 
     assert config.app.mode == RunMode.MOCK
     assert config.app.trading_mode == TradingMode.PAPER
+    assert config.app.live_enabled is False
     assert config.app.data_source_mode == DataSourceMode.CSV
     assert config.app.log_level == "INFO"
     assert config.app.kabu_api.base_url == "http://localhost:18080/kabusapi"
@@ -70,18 +71,48 @@ def test_validate_config_rejects_api_mode_without_token_env(monkeypatch) -> None
         validate_config(invalid_config)
 
 
-def test_validate_config_rejects_api_live_mode(monkeypatch) -> None:
+def test_validate_config_rejects_api_live_when_live_disabled(monkeypatch) -> None:
     config = load_config(Path("config"))
     api_live_app = replace(
         config.app,
         data_source_mode=DataSourceMode.API,
         trading_mode=TradingMode.LIVE,
+        live_enabled=False,
     )
     invalid_config = replace(config, app=api_live_app)
     monkeypatch.setenv(config.app.kabu_api.token_env_name, "password")
 
     with pytest.raises(ConfigValidationError):
         validate_config(invalid_config)
+
+
+def test_validate_config_rejects_csv_live_mode(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    csv_live_app = replace(
+        config.app,
+        data_source_mode=DataSourceMode.CSV,
+        trading_mode=TradingMode.LIVE,
+        live_enabled=True,
+    )
+    invalid_config = replace(config, app=csv_live_app)
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "password")
+
+    with pytest.raises(ConfigValidationError):
+        validate_config(invalid_config)
+
+
+def test_validate_config_accepts_api_live_when_enabled(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    api_live_app = replace(
+        config.app,
+        data_source_mode=DataSourceMode.API,
+        trading_mode=TradingMode.LIVE,
+        live_enabled=True,
+    )
+    valid_config = replace(config, app=api_live_app)
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "password")
+
+    validate_config(valid_config)
 
 
 def test_validate_config_rejects_empty_symbols() -> None:

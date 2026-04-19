@@ -10,9 +10,9 @@ import pytest
 from data_source.kabu_api_client import KabuApiClient, KabuApiError
 from data_source.push_client import PushClient
 from data_source.rest_poller import RestPoller
-from domain.enums import DataSourceMode, EventType, OrderStatus
+from domain.enums import DataSourceMode, EventType, OrderSide, OrderStatus
 from domain.events import BaseEvent, MarketDataUpdated, OrderStatusUpdated
-from domain.models import KabuApiConfig, KabuOrderStatus
+from domain.models import KabuApiConfig, KabuOrderRequest, KabuOrderStatus
 from infrastructure.event_bus import EventBus
 from processes.external_data_process import ExternalDataProcess
 
@@ -80,6 +80,52 @@ def test_kabu_api_client_logs_and_raises_on_failure(caplog) -> None:
         client.get_orders("token-1")
 
     assert "kabu orders request failed" in caplog.text
+
+
+def test_kabu_api_client_sends_order_and_returns_result() -> None:
+    calls: list[tuple[str, str, Mapping[str, str], dict[str, Any]]] = []
+
+    def fake_request(
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: bytes | None,
+        timeout_sec: int,
+    ) -> bytes:
+        assert body is not None
+        calls.append((method, url, headers, json.loads(body.decode("utf-8"))))
+        return json.dumps(
+            {
+                "OrderID": "api-order-1",
+                "Symbol": "7203",
+                "Status": "REQUESTED",
+                "CumQty": 0,
+                "LeavesQty": 100,
+            }
+        ).encode("utf-8")
+
+    client = KabuApiClient(config=_api_config(), http_request=fake_request)
+    result = client.send_order(
+        token="token-1",
+        order_request=KabuOrderRequest(
+            order_id="local-order-1",
+            symbol="7203",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_type="MARKET",
+            price=None,
+        ),
+    )
+
+    assert calls[0][0] == "POST"
+    assert calls[0][1] == "http://localhost:18080/kabusapi/sendorder"
+    assert calls[0][2]["X-API-KEY"] == "token-1"
+    assert calls[0][3]["Symbol"] == "7203"
+    assert calls[0][3]["Side"] == "BUY"
+    assert calls[0][3]["Qty"] == 100
+    assert result.order_id == "api-order-1"
+    assert result.status == OrderStatus.REQUESTED
+    assert result.remaining_quantity == 100
 
 
 def test_push_client_converts_message_to_market_data_event() -> None:

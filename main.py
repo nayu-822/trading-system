@@ -68,6 +68,11 @@ class ApplicationRuntime:
             self.config.app.trading_mode.value,
             ",".join(enabled_symbols),
         )
+        if self.config.app.trading_mode == TradingMode.LIVE:
+            self.logger.warning(
+                "LIVE MODE starting gateway=LiveOrderGateway symbols=%s",
+                ",".join(enabled_symbols),
+            )
         if self.config.app.recovery_enabled:
             self.restored_snapshot = self.snapshot_process.restore()
         self.logger.info("snapshot restore restored=%s", self.restored_snapshot)
@@ -215,7 +220,7 @@ def build_application_runtime(
             for symbol in config.symbols
             if symbol.enabled
         ),
-        order_gateway=_build_order_gateway(config.app.trading_mode),
+        order_gateway=_build_order_gateway(config=config, logger=logger),
     )
     persistence_process = PersistenceProcess(
         event_bus=event_bus,
@@ -276,12 +281,25 @@ def _build_external_data_process(
     )
 
 
-def _build_order_gateway(trading_mode: TradingMode) -> OrderGateway:
-    if trading_mode == TradingMode.PAPER:
+def _build_order_gateway(config: SystemConfig, logger: logging.Logger) -> OrderGateway:
+    if config.app.trading_mode == TradingMode.PAPER:
         return MockOrderGateway()
-    if trading_mode == TradingMode.LIVE:
-        return LiveOrderGateway()
-    raise ValueError(f"unsupported trading_mode={trading_mode.value}")
+    if config.app.trading_mode == TradingMode.LIVE:
+        enabled_symbols = tuple(
+            symbol.code for symbol in config.symbols if symbol.enabled
+        )
+        logger.warning(
+            "LIVE MODE gateway selected gateway=LiveOrderGateway symbols=%s",
+            ",".join(enabled_symbols),
+        )
+        api_client = KabuApiClient(config=config.app.kabu_api)
+        token = api_client.get_token()
+        return LiveOrderGateway(
+            api_client=api_client,
+            token=token,
+            allowed_symbols=enabled_symbols,
+        )
+    raise ValueError(f"unsupported trading_mode={config.app.trading_mode.value}")
 
 
 def main() -> int:
