@@ -3,16 +3,24 @@ from pathlib import Path
 from typing import Any
 
 from data_source.csv_loader import CsvMarketDataLoader
-from domain.enums import EventSource, EventType, OrderSide, SignalType, StrategyType
+from domain.enums import (
+    EventSource,
+    EventType,
+    OrderSide,
+    OrderStatus,
+    SignalType,
+    StrategyType,
+)
 from domain.events import (
     BaseEvent,
     EventFactory,
     MarketDataPayload,
     OrderRequested,
+    OrderStatusPayload,
     SignalDetected,
     SignalPayload,
 )
-from domain.models import SignalStrategyConfig
+from domain.models import SignalStrategyConfig, TradingSymbolConfig
 from infrastructure.event_bus import EventBus
 from processes.external_data_process import ExternalDataProcess
 from processes.signal_process import SignalProcess, SignalStrategySlot
@@ -34,6 +42,22 @@ def _create_market_data_event(price: float, symbol: str = "7203") -> BaseEvent[A
             ask=None,
             volume=None,
             timestamp=timestamp,
+        ),
+    )
+
+
+def _create_signal_event(
+    signal_type: SignalType,
+    symbol: str = "7203",
+) -> BaseEvent[Any]:
+    timestamp = datetime(2026, 4, 18, tzinfo=timezone.utc)
+    return EventFactory(source=EventSource.SIGNAL).create(
+        event_type=EventType.SIGNAL_DETECTED,
+        timestamp=timestamp,
+        symbol=symbol,
+        payload=SignalPayload(
+            signal_type=signal_type,
+            strategy_type=StrategyType.TREND,
         ),
     )
 
@@ -167,50 +191,123 @@ def test_signal_process_falls_back_to_trend_when_auto_is_configured(caplog) -> N
 
 def test_trading_process_publishes_order_requested_from_signal() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
-    timestamp = datetime(2026, 4, 18, tzinfo=timezone.utc)
-    signal_event = EventFactory(source=EventSource.SIGNAL).create(
-        event_type=EventType.SIGNAL_DETECTED,
-        timestamp=timestamp,
-        symbol="7203",
-        payload=SignalPayload(
-            signal_type=SignalType.BUY,
-            strategy_type=StrategyType.AUTO,
-        ),
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        lot_configs=(TradingSymbolConfig(symbol="7203", lot_size=200),),
     )
     received_events: list[BaseEvent[Any]] = []
 
     trading_process.start()
     event_bus.subscribe(EventType.ORDER_REQUESTED, received_events.append)
-    event_bus.publish(signal_event)
+    event_bus.publish(_create_signal_event(SignalType.BUY))
 
     assert len(received_events) == 1
     assert isinstance(received_events[0], OrderRequested)
     assert received_events[0].payload.symbol == "7203"
     assert received_events[0].payload.side == OrderSide.BUY
-    assert received_events[0].payload.quantity == 100
+    assert received_events[0].payload.quantity == 200
 
 
-def test_trading_process_ignores_exit_signal() -> None:
+def test_trading_process_does_not_publish_duplicate_order_for_same_symbol() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
-    timestamp = datetime(2026, 4, 18, tzinfo=timezone.utc)
-    signal_event = EventFactory(source=EventSource.SIGNAL).create(
-        event_type=EventType.SIGNAL_DETECTED,
-        timestamp=timestamp,
-        symbol="7203",
-        payload=SignalPayload(
-            signal_type=SignalType.EXIT,
-            strategy_type=StrategyType.AUTO,
-        ),
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
     )
     received_events: list[BaseEvent[Any]] = []
 
     trading_process.start()
     event_bus.subscribe(EventType.ORDER_REQUESTED, received_events.append)
-    event_bus.publish(signal_event)
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    event_bus.publish(_create_signal_event(SignalType.SELL))
+
+    state = trading_process.get_state("7203")
+
+    assert len(received_events) == 1
+    assert len(state.orders) == 1
+    assert state.orders[0].status == OrderStatus.REQUESTED
+
+
+def test_trading_process_ignores_same_direction_signal_when_position_exists() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    state = trading_process.get_state("7203")
+    assert state.position is not None
+    state.position.quantity = 100
+    state.position.average_price = 1000.0
+    received_events: list[BaseEvent[Any]] = []
+
+    trading_process.start()
+    event_bus.subscribe(EventType.ORDER_REQUESTED, received_events.append)
+    event_bus.publish(_create_signal_event(SignalType.BUY))
 
     assert received_events == []
+
+
+def test_trading_process_publishes_exit_order_when_position_exists() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    state = trading_process.get_state("7203")
+    assert state.position is not None
+    state.position.quantity = 200
+    state.position.average_price = 1000.0
+    received_events: list[BaseEvent[Any]] = []
+
+    trading_process.start()
+    event_bus.subscribe(EventType.ORDER_REQUESTED, received_events.append)
+    event_bus.publish(_create_signal_event(SignalType.EXIT))
+
+    assert len(received_events) == 1
+    assert isinstance(received_events[0], OrderRequested)
+    assert received_events[0].payload.side == OrderSide.SELL
+    assert received_events[0].payload.quantity == 200
+
+
+def test_trading_process_ignores_exit_signal_without_position() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    received_events: list[BaseEvent[Any]] = []
+
+    trading_process.start()
+    event_bus.subscribe(EventType.ORDER_REQUESTED, received_events.append)
+    event_bus.publish(_create_signal_event(SignalType.EXIT))
+
+    assert received_events == []
+
+
+def test_trading_process_updates_position_from_order_status() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+    timestamp = datetime(2026, 4, 18, tzinfo=timezone.utc)
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    status_event = EventFactory(source=EventSource.TRADING).create(
+        event_type=EventType.ORDER_STATUS_UPDATED,
+        timestamp=timestamp,
+        symbol="7203",
+        payload=OrderStatusPayload(
+            order_id=order.order_id,
+            status=OrderStatus.FILLED,
+            filled_quantity=100,
+            remaining_quantity=0,
+            avg_price=1000.0,
+        ),
+    )
+    event_bus.publish(status_event)
+
+    assert state.position is not None
+    assert order.status == OrderStatus.FILLED
+    assert state.position.quantity == 100
+    assert state.position.average_price == 1000.0
 
 
 def test_csv_event_flow_publishes_order_requested_end_to_end() -> None:

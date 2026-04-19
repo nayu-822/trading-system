@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from domain.enums import RunMode, StrategyType
+from domain.enums import OrderSide, OrderStatus, RunMode, StrategyType
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,49 @@ class SignalStrategyConfig:
 
     symbol: str
     strategy_type: StrategyType
+
+
+@dataclass(frozen=True)
+class TradingSymbolConfig:
+    """銘柄ごとの売買設定。"""
+
+    symbol: str
+    lot_size: int
+
+
+@dataclass
+class Order:
+    """trading_process 内で管理する注文状態。"""
+
+    order_id: str
+    symbol: str
+    side: OrderSide
+    quantity: int
+    order_type: str
+    status: OrderStatus = OrderStatus.NEW
+    price: float | None = None
+    filled_quantity: int = 0
+    remaining_quantity: int = 0
+    avg_price: float | None = None
+
+
+@dataclass
+class Position:
+    """銘柄単位の最小建玉数量と平均価格。"""
+
+    symbol: str
+    quantity: int = 0
+    average_price: float = 0.0
+
+
+@dataclass
+class TradingSymbolState:
+    """trading_process が銘柄ごとに保持する状態。"""
+
+    symbol: str
+    lot_size: int
+    orders: list[Order] = field(default_factory=list)
+    position: Position | None = None
 
 
 @dataclass(frozen=True)

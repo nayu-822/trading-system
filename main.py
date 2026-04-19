@@ -4,7 +4,7 @@ from pathlib import Path
 from data_source.csv_loader import CsvMarketDataLoader
 from domain.enums import EventSource, EventType, StrategyType
 from domain.events import EventFactory, SystemStartedPayload
-from domain.models import SignalStrategyConfig
+from domain.models import SignalStrategyConfig, TradingSymbolConfig
 from infrastructure.clock import RealClock
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
@@ -50,7 +50,17 @@ def initialize_application(
         ),
         range_window=config.strategy.range.window,
     )
-    trading_process = TradingProcess(event_bus=event_bus)
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        lot_configs=tuple(
+            TradingSymbolConfig(
+                symbol=symbol.code,
+                lot_size=symbol.lot_min,
+            )
+            for symbol in config.symbols
+            if symbol.enabled
+        ),
+    )
     signal_process.start()
     trading_process.start()
 

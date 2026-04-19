@@ -56,9 +56,11 @@ class OrderStatus(str, Enum):
     """注文状態。"""
 
     NEW = "NEW"
-    PARTIAL = "PARTIAL"
+    REQUESTED = "REQUESTED"
+    PARTIALLY_FILLED = "PARTIALLY_FILLED"
     FILLED = "FILLED"
     CANCELED = "CANCELED"
+    REJECTED = "REJECTED"
 
 
 class StrategyType(str, Enum):
