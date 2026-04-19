@@ -1,11 +1,12 @@
 import logging
 from collections import defaultdict
 from collections.abc import Callable
+from typing import Any
 
 from domain.enums import EventType
 from domain.events import BaseEvent
 
-EventHandler = Callable[[BaseEvent], None]
+EventHandler = Callable[[BaseEvent[Any]], None]
 
 
 class EventBus:
@@ -46,7 +47,7 @@ class EventBus:
         if handler in self._subscribers[event_type]:
             self._subscribers[event_type].remove(handler)
 
-    def publish(self, event: BaseEvent) -> None:
+    def publish(self, event: BaseEvent[Any]) -> None:
         """イベントを購読者へ同期的に配送する。
 
         Args:

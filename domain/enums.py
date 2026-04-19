@@ -17,10 +17,12 @@ class EventType(str, Enum):
     MARKET_DATA_UPDATED = "MarketDataUpdated"
     SIGNAL_DETECTED = "SignalDetected"
     ORDER_REQUESTED = "OrderRequested"
-    ORDER_UPDATED = "OrderUpdated"
-    FILL_UPDATED = "FillUpdated"
+    ORDER_STATUS_UPDATED = "OrderStatusUpdated"
     POSITION_UPDATED = "PositionUpdated"
+    RISK_UPDATED = "RiskUpdated"
     LOT_UPDATED = "LotUpdated"
+    SNAPSHOT_REQUESTED = "SnapshotRequested"
+    SNAPSHOT_CREATED = "SnapshotCreated"
     ERROR_OCCURRED = "ErrorOccurred"
 
 
@@ -33,3 +35,35 @@ class EventSource(str, Enum):
     TRADING = "trading"
     PERSISTENCE = "persistence"
     SNAPSHOT = "snapshot"
+
+
+class SignalType(str, Enum):
+    """売買意図を表すシグナル種別。"""
+
+    BUY = "BUY"
+    SELL = "SELL"
+    EXIT = "EXIT"
+
+
+class OrderSide(str, Enum):
+    """注文の売買方向。"""
+
+    BUY = "BUY"
+    SELL = "SELL"
+
+
+class OrderStatus(str, Enum):
+    """注文状態。"""
+
+    NEW = "NEW"
+    PARTIAL = "PARTIAL"
+    FILLED = "FILLED"
+    CANCELED = "CANCELED"
+
+
+class StrategyType(str, Enum):
+    """戦略種別。"""
+
+    TREND = "trend"
+    RANGE = "range"
+    AUTO = "auto"

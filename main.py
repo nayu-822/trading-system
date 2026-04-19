@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 from domain.enums import EventSource, EventType
-from domain.events import EventFactory
+from domain.events import EventFactory, SystemStartedPayload
 from infrastructure.clock import RealClock
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
@@ -36,7 +36,7 @@ def initialize_application(
         event_type=EventType.SYSTEM_STARTED,
         timestamp=clock.now(),
         symbol=None,
-        payload={"mode": config.app.mode.value},
+        payload=SystemStartedPayload(mode=config.app.mode.value),
     )
     event_bus.publish(started_event)
     logger.info("application initialized mode=%s", config.app.mode.value)

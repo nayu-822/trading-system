@@ -4,6 +4,14 @@ from domain.enums import RunMode
 
 
 @dataclass(frozen=True)
+class IndicatorValue:
+    """シグナル判定に使った指標値。"""
+
+    name: str
+    value: float
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """システム全体の設定モデル。"""
 

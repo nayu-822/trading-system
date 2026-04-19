@@ -1,26 +1,30 @@
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
 from domain.enums import EventSource, EventType
-from domain.events import BaseEvent, EventFactory
+from domain.events import BaseEvent, ErrorPayload, EventFactory, SystemStartedPayload
 from infrastructure.event_bus import EventBus
 
 
-def _create_event(event_type: EventType = EventType.SYSTEM_STARTED) -> BaseEvent:
-    return BaseEvent(
+def _create_event(event_type: EventType = EventType.SYSTEM_STARTED) -> BaseEvent[Any]:
+    payload = (
+        ErrorPayload(error_type="RuntimeError", message="failed")
+        if event_type == EventType.ERROR_OCCURRED
+        else SystemStartedPayload(mode="mock")
+    )
+    return EventFactory(source=EventSource.MAIN).create(
         event_type=event_type,
         timestamp=datetime(2026, 4, 18, tzinfo=timezone.utc),
-        source=EventSource.MAIN,
         symbol=None,
-        payload={"mode": "mock"},
-        sequence_no=1,
+        payload=payload,
     )
 
 
 def test_publish_delivers_event_to_subscriber() -> None:
     event_bus = EventBus()
-    received_events: list[BaseEvent] = []
+    received_events: list[BaseEvent[Any]] = []
     event = _create_event()
 
     event_bus.subscribe(EventType.SYSTEM_STARTED, received_events.append)
@@ -31,8 +35,8 @@ def test_publish_delivers_event_to_subscriber() -> None:
 
 def test_publish_delivers_event_to_multiple_subscribers() -> None:
     event_bus = EventBus()
-    received_events_a: list[BaseEvent] = []
-    received_events_b: list[BaseEvent] = []
+    received_events_a: list[BaseEvent[Any]] = []
+    received_events_b: list[BaseEvent[Any]] = []
     event = _create_event()
 
     event_bus.subscribe(EventType.SYSTEM_STARTED, received_events_a.append)
@@ -48,9 +52,9 @@ def test_publish_continues_delivery_then_raises_when_handler_fails(
 ) -> None:
     event_bus = EventBus()
     event = _create_event()
-    received_events: list[BaseEvent] = []
+    received_events: list[BaseEvent[Any]] = []
 
-    def raise_error(_: BaseEvent) -> None:
+    def raise_error(_: BaseEvent[Any]) -> None:
         raise RuntimeError("handler failed")
 
     event_bus.subscribe(EventType.SYSTEM_STARTED, raise_error)
@@ -65,7 +69,7 @@ def test_publish_continues_delivery_then_raises_when_handler_fails(
 
 def test_unsubscribe_removes_handler() -> None:
     event_bus = EventBus()
-    received_events: list[BaseEvent] = []
+    received_events: list[BaseEvent[Any]] = []
     event = _create_event()
 
     event_bus.subscribe(EventType.SYSTEM_STARTED, received_events.append)
@@ -77,7 +81,7 @@ def test_unsubscribe_removes_handler() -> None:
 
 def test_publish_ignores_unsubscribed_event_type() -> None:
     event_bus = EventBus()
-    received_events: list[BaseEvent] = []
+    received_events: list[BaseEvent[Any]] = []
     event = _create_event(EventType.ERROR_OCCURRED)
 
     event_bus.subscribe(EventType.SYSTEM_STARTED, received_events.append)
@@ -93,11 +97,13 @@ def test_event_factory_increments_sequence_no_per_process() -> None:
         event_type=EventType.SYSTEM_STARTED,
         timestamp=datetime(2026, 4, 18, tzinfo=timezone.utc),
         symbol=None,
+        payload=SystemStartedPayload(mode="mock"),
     )
     second_event = event_factory.create(
         event_type=EventType.ERROR_OCCURRED,
         timestamp=datetime(2026, 4, 18, tzinfo=timezone.utc),
         symbol=None,
+        payload=ErrorPayload(error_type="RuntimeError", message="failed"),
     )
 
     assert first_event.sequence_no == 1
@@ -107,10 +113,9 @@ def test_event_factory_increments_sequence_no_per_process() -> None:
 
 def test_event_rejects_string_event_type() -> None:
     with pytest.raises(TypeError):
-        BaseEvent(
+        EventFactory(source=EventSource.MAIN).create(
             event_type="SystemStarted",  # type: ignore[arg-type]
             timestamp=datetime(2026, 4, 18, tzinfo=timezone.utc),
-            source=EventSource.MAIN,
             symbol=None,
-            sequence_no=1,
+            payload=SystemStartedPayload(mode="mock"),
         )
