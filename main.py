@@ -127,6 +127,7 @@ class ApplicationRuntime:
         self.external_data_process.stop()
         self.trading_process.stop()
         self.signal_process.stop()
+        self.flush()
         self.snapshot_process.stop()
         self.persistence_process.stop()
         self._started = False

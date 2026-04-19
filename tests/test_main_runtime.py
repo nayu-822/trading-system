@@ -223,6 +223,63 @@ def test_csv_runtime_wait_returns_without_stop_event(monkeypatch) -> None:
     assert not stop_event.is_set()
 
 
+def test_runtime_stop_flushes_before_workers_stop(monkeypatch) -> None:
+    snapshot_dir = _test_dir("stop_flush")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+        snapshot_enabled=True,
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(_FakeExternalDataProcess(events=())),
+    )
+    runtime = app_main.build_application_runtime(config=config)
+    calls: list[str] = []
+    runtime.persistence_process.flush = lambda: calls.append("persistence_flush")
+    runtime.snapshot_process.flush = lambda: calls.append("snapshot_flush")
+    runtime.persistence_process.stop = lambda: calls.append("persistence_stop")
+    runtime.snapshot_process.stop = lambda: calls.append("snapshot_stop")
+
+    runtime.stop()
+
+    assert calls == [
+        "persistence_flush",
+        "snapshot_flush",
+        "snapshot_stop",
+        "persistence_stop",
+    ]
+
+
+def test_initialize_application_flushes_when_keyboard_interrupt(monkeypatch) -> None:
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=_test_dir("keyboard_interrupt"),
+    )
+    runtime = _FakeRuntimeForInterrupt(config=config)
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "validate_config", lambda _: None)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, csv_path=None: runtime,
+    )
+
+    try:
+        app_main.initialize_application(block_api=True)
+    except KeyboardInterrupt:
+        pass
+
+    assert runtime.calls == [
+        "start",
+        "run_external_data",
+        "wait",
+        "stop",
+        "flush",
+    ]
+
+
 class _FakeExternalDataProcess:
     def __init__(self, events: tuple[BaseEvent[Any], ...]) -> None:
         self.events = events
@@ -244,6 +301,36 @@ class _FakeExternalDataProcess:
 
     def stop(self) -> None:
         self.stop_count += 1
+
+
+class _FakeRuntimeForInterrupt:
+    def __init__(self, config: SystemConfig) -> None:
+        self.config = config
+        self.event_bus = EventBus()
+        self.logger = _FakeLogger()
+        self.calls: list[str] = []
+
+    def start(self) -> None:
+        self.calls.append("start")
+
+    def run_external_data(self) -> None:
+        self.calls.append("run_external_data")
+
+    def wait(self) -> None:
+        self.calls.append("wait")
+        raise KeyboardInterrupt
+
+    def flush(self) -> None:
+        self.calls.append("flush")
+
+    def stop(self) -> None:
+        self.calls.append("stop")
+        self.flush()
+
+
+class _FakeLogger:
+    def info(self, *args: Any, **kwargs: Any) -> None:
+        pass
 
 
 def _fake_external_builder(
