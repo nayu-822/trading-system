@@ -152,6 +152,18 @@ def _validate_risk(config: SystemConfig) -> None:
         raise ConfigValidationError("max_daily_loss は0より大きく指定してください")
     if config.risk.max_consecutive_losses <= 0:
         raise ConfigValidationError("max_consecutive_losses は1以上で指定してください")
+    if config.risk.resume_consecutive_wins <= 0:
+        raise ConfigValidationError("resume_consecutive_wins は1以上で指定してください")
+    if config.risk.max_positions <= 0:
+        raise ConfigValidationError("max_positions は1以上で指定してください")
+    if config.risk.max_position_per_symbol <= 0:
+        raise ConfigValidationError("max_position_per_symbol は1以上で指定してください")
+    if config.risk.account_equity <= 0:
+        raise ConfigValidationError("account_equity は0より大きく指定してください")
+    if config.risk.max_drawdown <= 0:
+        raise ConfigValidationError("max_drawdown は0より大きく指定してください")
+    if config.risk.api_error_limit <= 0:
+        raise ConfigValidationError("api_error_limit は1以上で指定してください")
     if config.risk.order_timeout_sec <= 0:
         raise ConfigValidationError("order_timeout_sec は1以上で指定してください")
     if config.risk.trading_start_time >= config.risk.trading_end_time:

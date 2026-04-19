@@ -31,6 +31,11 @@ def test_load_config_returns_structured_model() -> None:
     assert config.strategy.trend.short_window == 5
     assert config.strategy.range.window == 20
     assert config.risk.max_consecutive_losses == 3
+    assert config.risk.resume_consecutive_wins == 2
+    assert config.risk.max_positions == 3
+    assert config.risk.account_equity == 1000000
+    assert config.risk.kill_switch_enabled is True
+    assert config.risk.api_error_limit == 5
 
 
 def test_load_config_raises_when_file_missing() -> None:

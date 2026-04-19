@@ -34,6 +34,45 @@ class TradingSymbolConfig:
     lot_size: int
 
 
+@dataclass(frozen=True)
+class RiskSymbolConfig:
+    """RiskManager が参照する銘柄別リスク設定。"""
+
+    symbol: str
+    lot_min: int
+    lot_max: int
+    allocation_ratio: float
+
+
+@dataclass(frozen=True)
+class AccountState:
+    """ロット計算に使う最小口座状態。"""
+
+    available_equity: float
+
+
+@dataclass(frozen=True)
+class TradeResult:
+    """連勝・連敗制御に使う最小取引結果。"""
+
+    symbol: str
+    realized_pnl: float
+
+
+@dataclass
+class RiskControlState:
+    """RiskManager が保持する安全制御状態。"""
+
+    consecutive_losses: int = 0
+    consecutive_wins: int = 0
+    max_equity: float = 0.0
+    current_equity: float = 0.0
+    kill_switch_active: bool = False
+    stopped_by_losses: bool = False
+    daily_realized_loss: float = 0.0
+    api_error_count: int = 0
+
+
 @dataclass
 class Order:
     """trading_process 内で管理する注文状態。"""
@@ -219,6 +258,13 @@ class RiskConfig:
 
     max_daily_loss: float
     max_consecutive_losses: int
+    resume_consecutive_wins: int
+    max_positions: int
+    max_position_per_symbol: int
+    account_equity: float
+    max_drawdown: float
+    kill_switch_enabled: bool
+    api_error_limit: int
     trading_start_time: str
     trading_end_time: str
     order_timeout_sec: int

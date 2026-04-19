@@ -81,10 +81,25 @@ class TradingSymbolStateSnapshot:
 
 
 @dataclass(frozen=True)
+class RiskControlSnapshot:
+    """RiskManager の復元に必要な最小状態。"""
+
+    consecutive_losses: int
+    consecutive_wins: int
+    max_equity: float
+    current_equity: float
+    kill_switch_active: bool
+    stopped_by_losses: bool
+    daily_realized_loss: float
+    api_error_count: int
+
+
+@dataclass(frozen=True)
 class TradingStateSnapshot(BaseSnapshot):
     """trading_process 全体の復旧用スナップショット。"""
 
     symbols: tuple[TradingSymbolStateSnapshot, ...]
+    risk_state: RiskControlSnapshot | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "TradingStateSnapshot":
@@ -99,6 +114,7 @@ class TradingStateSnapshot(BaseSnapshot):
             updated_at=datetime.fromisoformat(str(data["updated_at"])),
             sequence_no=int(data["sequence_no"]),
             symbols=tuple(_symbol_snapshot_from_dict(item) for item in symbols_data),
+            risk_state=_risk_snapshot_from_dict(data.get("risk_state")),
         )
 
 
@@ -157,4 +173,21 @@ def _order_snapshot_from_dict(data: Mapping[str, Any]) -> OrderSnapshot:
         avg_price=(
             float(data["avg_price"]) if data.get("avg_price") is not None else None
         ),
+    )
+
+
+def _risk_snapshot_from_dict(value: Any) -> RiskControlSnapshot | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise TypeError("risk_state must be object")
+    return RiskControlSnapshot(
+        consecutive_losses=int(value["consecutive_losses"]),
+        consecutive_wins=int(value["consecutive_wins"]),
+        max_equity=float(value["max_equity"]),
+        current_equity=float(value["current_equity"]),
+        kill_switch_active=bool(value["kill_switch_active"]),
+        stopped_by_losses=bool(value["stopped_by_losses"]),
+        daily_realized_loss=float(value.get("daily_realized_loss", 0.0)),
+        api_error_count=int(value.get("api_error_count", 0)),
     )

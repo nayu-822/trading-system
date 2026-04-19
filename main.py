@@ -15,7 +15,12 @@ from domain.enums import (
     TradingMode,
 )
 from domain.events import EventFactory, SystemStartedPayload
-from domain.models import SignalStrategyConfig, SystemConfig, TradingSymbolConfig
+from domain.models import (
+    RiskSymbolConfig,
+    SignalStrategyConfig,
+    SystemConfig,
+    TradingSymbolConfig,
+)
 from infrastructure.clock import RealClock
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
@@ -30,6 +35,7 @@ from processes.trading_process import TradingProcess
 from trading.live_order_gateway import LiveOrderGateway
 from trading.mock_order_gateway import MockOrderGateway
 from trading.order_gateway import OrderGateway
+from trading.risk_manager import RiskManager
 
 CONFIG_DIR = Path("config")
 DEFAULT_CSV_PATH = Path("data/market_data.csv")
@@ -241,6 +247,7 @@ def build_application_runtime(
             if symbol.enabled
         ),
         order_gateway=_build_order_gateway(config=config, logger=logger),
+        risk_manager=_build_risk_manager(config=config),
     )
     persistence_process = PersistenceProcess(
         event_bus=event_bus,
@@ -320,6 +327,22 @@ def _build_order_gateway(config: SystemConfig, logger: logging.Logger) -> OrderG
             allowed_symbols=enabled_symbols,
         )
     raise ValueError(f"unsupported trading_mode={config.app.trading_mode.value}")
+
+
+def _build_risk_manager(config: SystemConfig) -> RiskManager:
+    return RiskManager(
+        config=config.risk,
+        symbol_configs=tuple(
+            RiskSymbolConfig(
+                symbol=symbol.code,
+                lot_min=symbol.lot_min,
+                lot_max=symbol.lot_max,
+                allocation_ratio=symbol.allocation_ratio,
+            )
+            for symbol in config.symbols
+            if symbol.enabled
+        ),
+    )
 
 
 def main() -> int:

@@ -1,5 +1,12 @@
 max_daily_loss: 10000
 max_consecutive_losses: 3
+resume_consecutive_wins: 2
+max_positions: 3
+max_position_per_symbol: 1000
+account_equity: 1000000
+max_drawdown: 50000
+kill_switch_enabled: true
+api_error_limit: 5
 trading_start_time: "09:00"
 trading_end_time: "15:00"
 order_timeout_sec: 30

@@ -12,16 +12,28 @@ from domain.events import (
     PositionPayload,
     SignalDetected,
 )
-from domain.models import Order, Position, TradingSymbolConfig, TradingSymbolState
+from domain.models import (
+    AccountState,
+    Order,
+    Position,
+    RiskConfig,
+    RiskControlState,
+    RiskSymbolConfig,
+    TradeResult,
+    TradingSymbolConfig,
+    TradingSymbolState,
+)
 from domain.snapshots import (
     OrderSnapshot,
     PositionStateSnapshot,
+    RiskControlSnapshot,
     TradingStateSnapshot,
     TradingSymbolStateSnapshot,
 )
 from infrastructure.event_bus import EventBus
 from trading.mock_order_gateway import MockOrderGateway
 from trading.order_gateway import OrderGateway
+from trading.risk_manager import RiskManager
 
 ORDER_STATUS_PRIORITY = {
     OrderStatus.REQUESTED: 0,
@@ -49,6 +61,7 @@ class TradingProcess:
     lot_configs: tuple[TradingSymbolConfig, ...] = ()
     auto_fill_orders: bool = True
     order_gateway: OrderGateway | None = None
+    risk_manager: RiskManager | None = None
     event_factory: EventFactory = field(
         default_factory=lambda: EventFactory(source=EventSource.TRADING)
     )
@@ -59,6 +72,11 @@ class TradingProcess:
     def __post_init__(self) -> None:
         if self.order_gateway is None:
             self.order_gateway = MockOrderGateway(event_factory=self.event_factory)
+        if self.risk_manager is None:
+            self.risk_manager = _default_risk_manager(
+                lot_configs=self.lot_configs,
+                order_quantity=self.order_quantity,
+            )
 
     def start(self) -> None:
         """SignalDetected と OrderStatusUpdated の購読を開始する。"""
@@ -122,11 +140,20 @@ class TradingProcess:
             )
             return
 
+        position = self._ensure_position(state)
         quantity = self._resolve_order_quantity(
             signal_type=event.payload.signal_type,
-            position=self._ensure_position(state),
+            position=position,
             lot_size=state.lot_size,
+            symbol=event.symbol,
+            side=order_side,
         )
+        if quantity <= 0:
+            self.logger.warning(
+                "signal ignored because calculated lot is zero symbol=%s",
+                event.symbol,
+            )
+            return
         order = Order(
             order_id=str(uuid4()),
             symbol=event.symbol,
@@ -211,6 +238,10 @@ class TradingProcess:
                 position=position,
                 timestamp=event.timestamp,
             )
+            if self.risk_manager is not None:
+                self.risk_manager.on_trade_result(
+                    TradeResult(symbol=order.symbol, realized_pnl=0.0)
+                )
         self.logger.info(
             "order status updated order_id=%s external_order_id=%s status=%s filled_quantity=%s remaining_quantity=%s",
             order.order_id,
@@ -244,6 +275,8 @@ class TradingProcess:
             return
         except Exception:
             self.logger.exception("order gateway failed order_id=%s", order.order_id)
+            if self.risk_manager is not None:
+                self.risk_manager.on_api_error()
             return
 
         for status_event in status_events:
@@ -291,6 +324,7 @@ class TradingProcess:
             updated_at=timestamp,
             sequence_no=self.event_factory.sequence_no,
             symbols=tuple(self._state_to_snapshot(state) for state in self.states),
+            risk_state=self._risk_state_to_snapshot(),
         )
 
     def restore_snapshot(self, snapshot: TradingStateSnapshot) -> None:
@@ -324,6 +358,19 @@ class TradingProcess:
             )
             for symbol_state in snapshot.symbols
         ]
+        if snapshot.risk_state is not None and self.risk_manager is not None:
+            self.risk_manager.restore_state(
+                RiskControlState(
+                    consecutive_losses=snapshot.risk_state.consecutive_losses,
+                    consecutive_wins=snapshot.risk_state.consecutive_wins,
+                    max_equity=snapshot.risk_state.max_equity,
+                    current_equity=snapshot.risk_state.current_equity,
+                    kill_switch_active=snapshot.risk_state.kill_switch_active,
+                    stopped_by_losses=snapshot.risk_state.stopped_by_losses,
+                    daily_realized_loss=snapshot.risk_state.daily_realized_loss,
+                    api_error_count=snapshot.risk_state.api_error_count,
+                )
+            )
 
     def _resolve_lot_size(self, symbol: str) -> int:
         for lot_config in self.lot_configs:
@@ -360,6 +407,20 @@ class TradingProcess:
                 )
                 for order in state.orders
             ),
+        )
+
+    def _risk_state_to_snapshot(self) -> RiskControlSnapshot | None:
+        if self.risk_manager is None:
+            return None
+        return RiskControlSnapshot(
+            consecutive_losses=self.risk_manager.state.consecutive_losses,
+            consecutive_wins=self.risk_manager.state.consecutive_wins,
+            max_equity=self.risk_manager.state.max_equity,
+            current_equity=self.risk_manager.state.current_equity,
+            kill_switch_active=self.risk_manager.state.kill_switch_active,
+            stopped_by_losses=self.risk_manager.state.stopped_by_losses,
+            daily_realized_loss=self.risk_manager.state.daily_realized_loss,
+            api_error_count=self.risk_manager.state.api_error_count,
         )
 
     def _has_open_order(self, state: TradingSymbolState) -> bool:
@@ -402,10 +463,25 @@ class TradingProcess:
         signal_type: SignalType,
         position: Position,
         lot_size: int,
+        symbol: str,
+        side: OrderSide,
     ) -> int:
         if signal_type == SignalType.EXIT:
             return abs(position.quantity)
-        return lot_size
+        if self.risk_manager is None:
+            return lot_size
+        if not self.risk_manager.can_enter(
+            symbol=symbol,
+            side=side,
+            current_state=tuple(self.states),
+        ):
+            return 0
+        return self.risk_manager.calculate_lot(
+            symbol=symbol,
+            account_state=AccountState(
+                available_equity=self.risk_manager.state.current_equity
+            ),
+        )
 
     def _find_order(self, order_id: str) -> Order | None:
         for state in self.states:
@@ -474,3 +550,45 @@ class TradingProcess:
         return (before_quantity > 0 and after_quantity < 0) or (
             before_quantity < 0 and after_quantity > 0
         )
+
+
+def _default_risk_manager(
+    lot_configs: tuple[TradingSymbolConfig, ...],
+    order_quantity: int,
+) -> RiskManager:
+    max_lot = max(
+        (lot_config.lot_size for lot_config in lot_configs), default=order_quantity
+    )
+    return RiskManager(
+        config=RiskConfig(
+            max_daily_loss=1_000_000_000.0,
+            max_consecutive_losses=1_000_000,
+            resume_consecutive_wins=1,
+            max_positions=1_000_000,
+            max_position_per_symbol=1_000_000_000,
+            account_equity=1_000_000_000.0,
+            max_drawdown=1_000_000_000.0,
+            kill_switch_enabled=True,
+            api_error_limit=1_000_000,
+            trading_start_time="00:00",
+            trading_end_time="23:59",
+            order_timeout_sec=30,
+        ),
+        symbol_configs=tuple(
+            RiskSymbolConfig(
+                symbol=lot_config.symbol,
+                lot_min=lot_config.lot_size,
+                lot_max=max(lot_config.lot_size, max_lot),
+                allocation_ratio=1.0,
+            )
+            for lot_config in lot_configs
+        )
+        or (
+            RiskSymbolConfig(
+                symbol="7203",
+                lot_min=order_quantity,
+                lot_max=order_quantity,
+                allocation_ratio=1.0,
+            ),
+        ),
+    )

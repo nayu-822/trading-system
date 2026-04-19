@@ -261,6 +261,13 @@ def _build_risk_config(data: dict[str, Any]) -> RiskConfig:
     return RiskConfig(
         max_daily_loss=float(data["max_daily_loss"]),
         max_consecutive_losses=int(data["max_consecutive_losses"]),
+        resume_consecutive_wins=int(data.get("resume_consecutive_wins", 2)),
+        max_positions=int(data.get("max_positions", 1)),
+        max_position_per_symbol=int(data.get("max_position_per_symbol", 100)),
+        account_equity=float(data.get("account_equity", 0)),
+        max_drawdown=float(data.get("max_drawdown", data["max_daily_loss"])),
+        kill_switch_enabled=bool(data.get("kill_switch_enabled", True)),
+        api_error_limit=int(data.get("api_error_limit", 5)),
         trading_start_time=str(data["trading_start_time"]),
         trading_end_time=str(data["trading_end_time"]),
         order_timeout_sec=int(data["order_timeout_sec"]),
