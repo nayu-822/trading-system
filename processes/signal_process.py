@@ -13,6 +13,14 @@ from infrastructure.event_bus import EventBus
 
 
 @dataclass
+class SignalProcessState:
+    """銘柄ごとのシグナル生成状態。"""
+
+    symbol: str
+    last_price: float | None = None
+
+
+@dataclass
 class SignalProcess:
     """市場データから最小シグナルを生成するプロセス。"""
 
@@ -21,7 +29,7 @@ class SignalProcess:
         default_factory=lambda: EventFactory(source=EventSource.SIGNAL)
     )
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
-    last_price: float | None = None
+    states: dict[str, SignalProcessState] = field(default_factory=dict)
 
     def start(self) -> None:
         """MarketDataUpdated の購読を開始する。"""
@@ -33,10 +41,14 @@ class SignalProcess:
 
         if not isinstance(event, MarketDataUpdated):
             return
+        if event.symbol is None:
+            self.logger.warning("market data ignored because symbol is empty")
+            return
 
         current_price = event.payload.price
-        previous_price = self.last_price
-        self.last_price = current_price
+        state = self._get_state(event.symbol)
+        previous_price = state.last_price
+        state.last_price = current_price
 
         if previous_price is None or current_price == previous_price:
             return
@@ -67,3 +79,8 @@ class SignalProcess:
             signal_type.value,
             signal_event.sequence_no,
         )
+
+    def _get_state(self, symbol: str) -> SignalProcessState:
+        if symbol not in self.states:
+            self.states[symbol] = SignalProcessState(symbol=symbol)
+        return self.states[symbol]

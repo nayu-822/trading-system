@@ -20,12 +20,12 @@ from processes.trading_process import TradingProcess
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
-def _create_market_data_event(price: float) -> BaseEvent[Any]:
+def _create_market_data_event(price: float, symbol: str = "7203") -> BaseEvent[Any]:
     timestamp = datetime(2026, 4, 18, tzinfo=timezone.utc)
     return EventFactory(source=EventSource.EXTERNAL_DATA).create(
         event_type=EventType.MARKET_DATA_UPDATED,
         timestamp=timestamp,
-        symbol="7203",
+        symbol=symbol,
         payload=MarketDataPayload(
             price=price,
             bid=None,
@@ -68,6 +68,29 @@ def test_signal_process_publishes_sell_when_price_falls() -> None:
     assert received_events[0].payload.indicators[0].value == -1.0
 
 
+def test_signal_process_keeps_last_price_by_symbol() -> None:
+    event_bus = EventBus()
+    signal_process = SignalProcess(event_bus=event_bus)
+    received_events: list[BaseEvent[Any]] = []
+
+    signal_process.start()
+    event_bus.subscribe(EventType.SIGNAL_DETECTED, received_events.append)
+    event_bus.publish(_create_market_data_event(price=100.0, symbol="7203"))
+    event_bus.publish(_create_market_data_event(price=500.0, symbol="6758"))
+    event_bus.publish(_create_market_data_event(price=101.0, symbol="7203"))
+    event_bus.publish(_create_market_data_event(price=499.0, symbol="6758"))
+
+    assert len(received_events) == 2
+    assert received_events[0].symbol == "7203"
+    assert received_events[0].payload.signal_type == SignalType.BUY
+    assert received_events[0].payload.indicators[0].value == 1.0
+    assert received_events[1].symbol == "6758"
+    assert received_events[1].payload.signal_type == SignalType.SELL
+    assert received_events[1].payload.indicators[0].value == -1.0
+    assert signal_process.states["7203"].last_price == 101.0
+    assert signal_process.states["6758"].last_price == 499.0
+
+
 def test_trading_process_publishes_order_requested_from_signal() -> None:
     event_bus = EventBus()
     trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
@@ -92,6 +115,28 @@ def test_trading_process_publishes_order_requested_from_signal() -> None:
     assert received_events[0].payload.symbol == "7203"
     assert received_events[0].payload.side == OrderSide.BUY
     assert received_events[0].payload.quantity == 100
+
+
+def test_trading_process_ignores_exit_signal() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    timestamp = datetime(2026, 4, 18, tzinfo=timezone.utc)
+    signal_event = EventFactory(source=EventSource.SIGNAL).create(
+        event_type=EventType.SIGNAL_DETECTED,
+        timestamp=timestamp,
+        symbol="7203",
+        payload=SignalPayload(
+            signal_type=SignalType.EXIT,
+            strategy_type=StrategyType.AUTO,
+        ),
+    )
+    received_events: list[BaseEvent[Any]] = []
+
+    trading_process.start()
+    event_bus.subscribe(EventType.ORDER_REQUESTED, received_events.append)
+    event_bus.publish(signal_event)
+
+    assert received_events == []
 
 
 def test_csv_event_flow_publishes_order_requested_end_to_end() -> None:

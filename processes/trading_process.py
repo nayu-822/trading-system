@@ -33,6 +33,13 @@ class TradingProcess:
             return
 
         side = self._to_order_side(event.payload.signal_type)
+        if side is None:
+            self.logger.warning(
+                "signal ignored because signal_type is unsupported signal_type=%s",
+                event.payload.signal_type.value,
+            )
+            return
+
         order_event = self.event_factory.create(
             event_type=EventType.ORDER_REQUESTED,
             timestamp=event.timestamp,
@@ -54,7 +61,9 @@ class TradingProcess:
             order_event.sequence_no,
         )
 
-    def _to_order_side(self, signal_type: SignalType) -> OrderSide:
+    def _to_order_side(self, signal_type: SignalType) -> OrderSide | None:
         if signal_type == SignalType.BUY:
             return OrderSide.BUY
-        return OrderSide.SELL
+        if signal_type == SignalType.SELL:
+            return OrderSide.SELL
+        return None
