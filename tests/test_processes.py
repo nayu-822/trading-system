@@ -24,6 +24,7 @@ from domain.events import (
     SignalPayload,
 )
 from domain.models import (
+    IndicatorValue,
     KabuOrderRequest,
     KabuOrderResult,
     SignalStrategyConfig,
@@ -67,6 +68,7 @@ def _create_signal_event(
         payload=SignalPayload(
             signal_type=signal_type,
             strategy_type=StrategyType.TREND,
+            indicators=(IndicatorValue(name="current_price", value=1000.0),),
         ),
     )
 

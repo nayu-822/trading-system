@@ -49,6 +49,7 @@ class AccountState:
     """ロット計算に使う最小口座状態。"""
 
     available_equity: float
+    reference_price: float | None = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,7 @@ class RiskControlState:
     stopped_by_losses: bool = False
     daily_realized_loss: float = 0.0
     api_error_count: int = 0
+    business_date: str | None = None
 
 
 @dataclass

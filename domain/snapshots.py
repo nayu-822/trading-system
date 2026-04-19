@@ -92,6 +92,7 @@ class RiskControlSnapshot:
     stopped_by_losses: bool
     daily_realized_loss: float
     api_error_count: int
+    business_date: str | None
 
 
 @dataclass(frozen=True)
@@ -190,4 +191,9 @@ def _risk_snapshot_from_dict(value: Any) -> RiskControlSnapshot | None:
         stopped_by_losses=bool(value["stopped_by_losses"]),
         daily_realized_loss=float(value.get("daily_realized_loss", 0.0)),
         api_error_count=int(value.get("api_error_count", 0)),
+        business_date=(
+            str(value["business_date"])
+            if value.get("business_date") is not None
+            else None
+        ),
     )

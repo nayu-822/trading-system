@@ -1,5 +1,7 @@
 import logging
 from dataclasses import dataclass, field
+from datetime import date
+from typing import Callable
 
 from domain.enums import OrderSide
 from domain.models import (
@@ -19,6 +21,7 @@ class RiskManager:
     config: RiskConfig
     symbol_configs: tuple[RiskSymbolConfig, ...]
     state: RiskControlState = field(default_factory=RiskControlState)
+    today_provider: Callable[[], date] = date.today
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
 
     def __post_init__(self) -> None:
@@ -26,6 +29,7 @@ class RiskManager:
             self.state.current_equity = self.config.account_equity
         if self.state.max_equity <= 0:
             self.state.max_equity = self.state.current_equity
+        self._ensure_business_date()
 
     def can_enter(
         self,
@@ -77,16 +81,28 @@ class RiskManager:
                 budget,
             )
             return 0
-        lot = min(symbol_config.lot_max, int(budget))
+        if account_state.reference_price is None or account_state.reference_price <= 0:
+            self.logger.warning(
+                "lot calculated symbol=%s lot=0 reason=missing_reference_price",
+                symbol,
+            )
+            return 0
+        raw_quantity = int(budget / account_state.reference_price)
+        lot = min(symbol_config.lot_max, raw_quantity)
         lot -= lot % symbol_config.lot_min
         self.logger.info(
-            "lot calculated symbol=%s lot=%s budget=%s", symbol, lot, budget
+            "lot calculated symbol=%s lot=%s budget=%s reference_price=%s",
+            symbol,
+            lot,
+            budget,
+            account_state.reference_price,
         )
         return lot
 
     def on_trade_result(self, trade_result: TradeResult) -> None:
         """取引結果から連勝・連敗状態を更新する。"""
 
+        self._ensure_business_date()
         if trade_result.realized_pnl < 0:
             self.state.consecutive_losses += 1
             self.state.consecutive_wins = 0
@@ -157,6 +173,21 @@ class RiskManager:
 
         self.state = state
         self.__post_init__()
+
+    def _ensure_business_date(self) -> None:
+        current_date = self.today_provider().isoformat()
+        if self.state.business_date is None:
+            self.state.business_date = current_date
+            return
+        if self.state.business_date != current_date:
+            self.logger.info(
+                "daily risk state reset previous_date=%s current_date=%s previous_loss=%s",
+                self.state.business_date,
+                current_date,
+                self.state.daily_realized_loss,
+            )
+            self.state.business_date = current_date
+            self.state.daily_realized_loss = 0.0
 
     def _open_position_count(
         self,

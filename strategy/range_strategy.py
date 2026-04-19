@@ -49,6 +49,7 @@ class RangeStrategy:
             indicators=(
                 IndicatorValue(name="range_low", value=range_low),
                 IndicatorValue(name="range_high", value=range_high),
+                IndicatorValue(name="current_price", value=current_price),
             ),
         )
 

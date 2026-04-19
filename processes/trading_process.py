@@ -7,6 +7,7 @@ from domain.enums import EventSource, EventType, OrderSide, OrderStatus, SignalT
 from domain.events import (
     BaseEvent,
     EventFactory,
+    MarketDataUpdated,
     OrderRequestedPayload,
     OrderStatusUpdated,
     PositionPayload,
@@ -67,6 +68,7 @@ class TradingProcess:
     )
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
     states: list[TradingSymbolState] = field(default_factory=list)
+    latest_prices: list[tuple[str, float]] = field(default_factory=list)
     _subscribed: bool = False
 
     def __post_init__(self) -> None:
@@ -83,6 +85,7 @@ class TradingProcess:
 
         if self._subscribed:
             return
+        self.event_bus.subscribe(EventType.MARKET_DATA_UPDATED, self.handle_market_data)
         self.event_bus.subscribe(EventType.SIGNAL_DETECTED, self.handle_signal)
         self.event_bus.subscribe(
             EventType.ORDER_STATUS_UPDATED,
@@ -95,12 +98,22 @@ class TradingProcess:
 
         if not self._subscribed:
             return
+        self.event_bus.unsubscribe(
+            EventType.MARKET_DATA_UPDATED, self.handle_market_data
+        )
         self.event_bus.unsubscribe(EventType.SIGNAL_DETECTED, self.handle_signal)
         self.event_bus.unsubscribe(
             EventType.ORDER_STATUS_UPDATED,
             self.handle_order_status,
         )
         self._subscribed = False
+
+    def handle_market_data(self, event: BaseEvent) -> None:
+        """市場価格をロット計算の基準価格として保持する。"""
+
+        if not isinstance(event, MarketDataUpdated) or event.symbol is None:
+            return
+        self._set_latest_price(symbol=event.symbol, price=event.payload.price)
 
     def handle_signal(self, event: BaseEvent) -> None:
         """シグナルを受けて発注要求を生成する。"""
@@ -111,6 +124,7 @@ class TradingProcess:
             self.logger.warning("signal ignored because symbol is empty")
             return
 
+        self._set_latest_price_from_signal(event)
         state = self.get_state(event.symbol)
         if self._has_open_order(state):
             self.logger.warning(
@@ -369,6 +383,7 @@ class TradingProcess:
                     stopped_by_losses=snapshot.risk_state.stopped_by_losses,
                     daily_realized_loss=snapshot.risk_state.daily_realized_loss,
                     api_error_count=snapshot.risk_state.api_error_count,
+                    business_date=snapshot.risk_state.business_date,
                 )
             )
 
@@ -421,6 +436,7 @@ class TradingProcess:
             stopped_by_losses=self.risk_manager.state.stopped_by_losses,
             daily_realized_loss=self.risk_manager.state.daily_realized_loss,
             api_error_count=self.risk_manager.state.api_error_count,
+            business_date=self.risk_manager.state.business_date,
         )
 
     def _has_open_order(self, state: TradingSymbolState) -> bool:
@@ -479,7 +495,8 @@ class TradingProcess:
         return self.risk_manager.calculate_lot(
             symbol=symbol,
             account_state=AccountState(
-                available_equity=self.risk_manager.state.current_equity
+                available_equity=self.risk_manager.state.current_equity,
+                reference_price=self._reference_price(symbol),
             ),
         )
 
@@ -488,6 +505,30 @@ class TradingProcess:
             for order in state.orders:
                 if order.order_id == order_id or order.external_order_id == order_id:
                     return order
+        return None
+
+    def _set_latest_price(self, symbol: str, price: float) -> None:
+        for index, (current_symbol, _) in enumerate(self.latest_prices):
+            if current_symbol == symbol:
+                self.latest_prices[index] = (symbol, price)
+                return
+        self.latest_prices.append((symbol, price))
+
+    def _set_latest_price_from_signal(self, event: SignalDetected) -> None:
+        if event.symbol is None:
+            return
+        for indicator in event.payload.indicators:
+            if indicator.name in ("current_price", "reference_price"):
+                self._set_latest_price(symbol=event.symbol, price=indicator.value)
+                return
+
+    def _reference_price(self, symbol: str) -> float | None:
+        for current_symbol, price in self.latest_prices:
+            if current_symbol == symbol:
+                return price
+        self.logger.warning(
+            "reference price is missing symbol=%s lot_calculation_skipped", symbol
+        )
         return None
 
     def _should_apply_order_status_update(

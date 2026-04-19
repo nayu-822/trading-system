@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "created_at": "2026-04-18T00:00:00+00:00",
+  "updated_at": "2026-04-18T00:00:00+00:00",
+  "sequence_no": 1,
+  "symbols": [
+    {
+      "symbol": "7203",
+      "lot_size": 100,
+      "position": {
+        "symbol": "7203",
+        "quantity": 100,
+        "average_price": 1000.0
+      },
+      "orders": [
+        {
+          "order_id": "local-order-1",
+          "external_order_id": "api-order-1",
+          "symbol": "7203",
+          "side": "BUY",
+          "quantity": 100,
+          "order_type": "MARKET",
+          "status": "FILLED",
+          "price": null,
+          "filled_quantity": 100,
+          "remaining_quantity": 0,
+          "avg_price": 1000.0
+        }
+      ]
+    }
+  ],
+  "risk_state": {
+    "consecutive_losses": 0,
+    "consecutive_wins": 0,
+    "max_equity": 1000000.0,
+    "current_equity": 1000000.0,
+    "kill_switch_active": false,
+    "stopped_by_losses": false,
+    "daily_realized_loss": 0.0,
+    "api_error_count": 0,
+    "business_date": "2026-04-19"
+  }
+}

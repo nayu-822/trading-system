@@ -46,6 +46,7 @@ class TrendStrategy:
                     name="price_delta",
                     value=current_price - previous_price,
                 ),
+                IndicatorValue(name="current_price", value=current_price),
             ),
         )
 
