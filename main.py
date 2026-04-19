@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 
+from data_source.csv_loader import CsvMarketDataLoader
 from domain.enums import EventSource, EventType
 from domain.events import EventFactory, SystemStartedPayload
 from infrastructure.clock import RealClock
@@ -8,13 +9,18 @@ from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
 from infrastructure.event_bus import EventBus
 from infrastructure.logger import setup_logger
+from processes.external_data_process import ExternalDataProcess
+from processes.signal_process import SignalProcess
+from processes.trading_process import TradingProcess
 
 CONFIG_DIR = Path("config")
+DEFAULT_CSV_PATH = Path("data/market_data.csv")
 DEFAULT_LOG_LEVEL = "INFO"
 
 
 def initialize_application(
     config_dir: Path = CONFIG_DIR,
+    csv_path: Path | None = None,
 ) -> tuple[EventBus, logging.Logger]:
     """アプリケーションの最小基盤を初期化する。
 
@@ -31,6 +37,11 @@ def initialize_application(
     logger = setup_logger(config.app.log_level, process_name=EventSource.MAIN.value)
     event_bus = EventBus()
     clock = RealClock()
+    signal_process = SignalProcess(event_bus=event_bus)
+    trading_process = TradingProcess(event_bus=event_bus)
+    signal_process.start()
+    trading_process.start()
+
     event_factory = EventFactory(source=EventSource.MAIN)
     started_event = event_factory.create(
         event_type=EventType.SYSTEM_STARTED,
@@ -39,6 +50,19 @@ def initialize_application(
         payload=SystemStartedPayload(mode=config.app.mode.value),
     )
     event_bus.publish(started_event)
+
+    target_csv_path = csv_path or DEFAULT_CSV_PATH
+    if target_csv_path.exists():
+        enabled_symbol = next(symbol for symbol in config.symbols if symbol.enabled)
+        external_data_process = ExternalDataProcess(
+            event_bus=event_bus,
+            csv_loader=CsvMarketDataLoader(),
+        )
+        external_data_process.run_csv(
+            csv_path=target_csv_path,
+            symbol=enabled_symbol.code,
+        )
+
     logger.info("application initialized mode=%s", config.app.mode.value)
     return event_bus, logger
 
