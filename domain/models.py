@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from domain.enums import RunMode
+from domain.enums import RunMode, StrategyType
 
 
 @dataclass(frozen=True)
@@ -9,6 +9,14 @@ class IndicatorValue:
 
     name: str
     value: float
+
+
+@dataclass(frozen=True)
+class SignalStrategyConfig:
+    """銘柄ごとのシグナル戦略設定。"""
+
+    symbol: str
+    strategy_type: StrategyType
 
 
 @dataclass(frozen=True)

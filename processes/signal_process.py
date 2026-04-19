@@ -1,35 +1,38 @@
 import logging
 from dataclasses import dataclass, field
 
-from domain.enums import EventSource, EventType, SignalType, StrategyType
-from domain.events import (
-    BaseEvent,
-    EventFactory,
-    MarketDataUpdated,
-    SignalPayload,
-)
-from domain.models import IndicatorValue
+from domain.enums import EventSource, EventType, StrategyType
+from domain.events import BaseEvent, EventFactory, MarketDataUpdated
+from domain.models import SignalStrategyConfig
 from infrastructure.event_bus import EventBus
+from strategy.base_strategy import BaseStrategy
+from strategy.range_strategy import RangeStrategy, RangeStrategyState
+from strategy.trend_strategy import TrendStrategy, TrendStrategyState
 
 
 @dataclass
-class SignalProcessState:
-    """銘柄ごとのシグナル生成状態。"""
+class SignalStrategySlot:
+    """銘柄ごとの戦略実行単位。"""
 
     symbol: str
-    last_price: float | None = None
+    requested_strategy_type: StrategyType
+    active_strategy_type: StrategyType
+    strategy: BaseStrategy
 
 
 @dataclass
 class SignalProcess:
-    """市場データから最小シグナルを生成するプロセス。"""
+    """市場データを戦略へ委譲してシグナルを生成するプロセス。"""
 
     event_bus: EventBus
+    strategy_configs: tuple[SignalStrategyConfig, ...] = ()
+    default_strategy_type: StrategyType = StrategyType.AUTO
+    range_window: int = 3
     event_factory: EventFactory = field(
         default_factory=lambda: EventFactory(source=EventSource.SIGNAL)
     )
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
-    states: dict[str, SignalProcessState] = field(default_factory=dict)
+    slots: list[SignalStrategySlot] = field(default_factory=list)
 
     def start(self) -> None:
         """MarketDataUpdated の購読を開始する。"""
@@ -37,7 +40,7 @@ class SignalProcess:
         self.event_bus.subscribe(EventType.MARKET_DATA_UPDATED, self.handle_market_data)
 
     def handle_market_data(self, event: BaseEvent) -> None:
-        """価格変化に応じて BUY / SELL シグナルを publish する。"""
+        """市場データを銘柄別戦略へ渡し、シグナルがあれば publish する。"""
 
         if not isinstance(event, MarketDataUpdated):
             return
@@ -45,42 +48,83 @@ class SignalProcess:
             self.logger.warning("market data ignored because symbol is empty")
             return
 
-        current_price = event.payload.price
-        state = self._get_state(event.symbol)
-        previous_price = state.last_price
-        state.last_price = current_price
-
-        if previous_price is None or current_price == previous_price:
+        slot = self._get_or_create_slot(event.symbol)
+        payload = slot.strategy.on_market_data(event)
+        if payload is None:
             return
 
-        signal_type = (
-            SignalType.BUY if current_price > previous_price else SignalType.SELL
-        )
         signal_event = self.event_factory.create(
             event_type=EventType.SIGNAL_DETECTED,
             timestamp=event.timestamp,
             symbol=event.symbol,
-            payload=SignalPayload(
-                signal_type=signal_type,
-                strategy_type=StrategyType.AUTO,
-                confidence=None,
-                indicators=(
-                    IndicatorValue(
-                        name="price_delta",
-                        value=current_price - previous_price,
-                    ),
-                ),
-            ),
+            payload=payload,
         )
         self.event_bus.publish(signal_event)
         self.logger.info(
-            "signal published symbol=%s signal_type=%s sequence_no=%s",
+            "signal published symbol=%s signal_type=%s strategy_type=%s sequence_no=%s",
             signal_event.symbol,
-            signal_type.value,
+            payload.signal_type.value,
+            payload.strategy_type.value,
             signal_event.sequence_no,
         )
 
-    def _get_state(self, symbol: str) -> SignalProcessState:
-        if symbol not in self.states:
-            self.states[symbol] = SignalProcessState(symbol=symbol)
-        return self.states[symbol]
+    def _get_or_create_slot(self, symbol: str) -> SignalStrategySlot:
+        for slot in self.slots:
+            if slot.symbol == symbol:
+                return slot
+
+        requested_strategy_type = self._resolve_requested_strategy_type(symbol)
+        active_strategy_type = self._resolve_active_strategy_type(
+            symbol=symbol,
+            requested_strategy_type=requested_strategy_type,
+        )
+        slot = SignalStrategySlot(
+            symbol=symbol,
+            requested_strategy_type=requested_strategy_type,
+            active_strategy_type=active_strategy_type,
+            strategy=self._create_strategy(
+                symbol=symbol,
+                strategy_type=active_strategy_type,
+            ),
+        )
+        self.slots.append(slot)
+        return slot
+
+    def _resolve_requested_strategy_type(self, symbol: str) -> StrategyType:
+        for strategy_config in self.strategy_configs:
+            if strategy_config.symbol == symbol:
+                return strategy_config.strategy_type
+        return self.default_strategy_type
+
+    def _resolve_active_strategy_type(
+        self,
+        symbol: str,
+        requested_strategy_type: StrategyType,
+    ) -> StrategyType:
+        if requested_strategy_type == StrategyType.AUTO:
+            self.logger.warning(
+                "auto strategy is not implemented; fallback to trend symbol=%s",
+                symbol,
+            )
+            return StrategyType.TREND
+        if requested_strategy_type in {StrategyType.TREND, StrategyType.RANGE}:
+            return requested_strategy_type
+
+        self.logger.warning(
+            "unsupported strategy; fallback to trend symbol=%s strategy_type=%s",
+            symbol,
+            requested_strategy_type,
+        )
+        return StrategyType.TREND
+
+    def _create_strategy(
+        self,
+        symbol: str,
+        strategy_type: StrategyType,
+    ) -> BaseStrategy:
+        if strategy_type == StrategyType.RANGE:
+            return RangeStrategy(
+                state=RangeStrategyState(symbol=symbol),
+                window=self.range_window,
+            )
+        return TrendStrategy(state=TrendStrategyState(symbol=symbol))

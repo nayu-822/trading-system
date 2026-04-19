@@ -2,8 +2,9 @@ import logging
 from pathlib import Path
 
 from data_source.csv_loader import CsvMarketDataLoader
-from domain.enums import EventSource, EventType
+from domain.enums import EventSource, EventType, StrategyType
 from domain.events import EventFactory, SystemStartedPayload
+from domain.models import SignalStrategyConfig
 from infrastructure.clock import RealClock
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
@@ -37,7 +38,18 @@ def initialize_application(
     logger = setup_logger(config.app.log_level, process_name=EventSource.MAIN.value)
     event_bus = EventBus()
     clock = RealClock()
-    signal_process = SignalProcess(event_bus=event_bus)
+    signal_process = SignalProcess(
+        event_bus=event_bus,
+        strategy_configs=tuple(
+            SignalStrategyConfig(
+                symbol=symbol.code,
+                strategy_type=StrategyType(symbol.strategy),
+            )
+            for symbol in config.symbols
+            if symbol.enabled
+        ),
+        range_window=config.strategy.range.window,
+    )
     trading_process = TradingProcess(event_bus=event_bus)
     signal_process.start()
     trading_process.start()
