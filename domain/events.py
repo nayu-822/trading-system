@@ -374,7 +374,7 @@ class EventFactory:
 
     @property
     def sequence_no(self) -> int:
-        """譛蠕後↓逕滓・縺励◆ sequence_no 繧定ｿ斐☆縲・"""
+        """最後に生成した sequence_no を返す。"""
 
         return self._sequence_no
 
