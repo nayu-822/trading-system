@@ -64,6 +64,19 @@ class ExternalDataProcess:
             self.rest_poller.start()
         self._running_api = True
 
+    def sync_orders_once(self) -> int:
+        """REST から注文状態を再取得し、イベントとして publish する。"""
+
+        if self.rest_poller is None:
+            self.logger.warning("order resync skipped because rest_poller is empty")
+            return 0
+        self.logger.info("order resync started")
+        events = self.rest_poller.poll_once()
+        for event in events:
+            self.event_bus.publish(event)
+        self.logger.info("order resync completed count=%s", len(events))
+        return len(events)
+
     def stop(self) -> None:
         """Push / REST の外部データ取得を停止する。"""
 

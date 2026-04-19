@@ -23,6 +23,21 @@ from infrastructure.event_bus import EventBus
 from trading.mock_order_gateway import MockOrderGateway
 from trading.order_gateway import OrderGateway
 
+ORDER_STATUS_PRIORITY = {
+    OrderStatus.REQUESTED: 0,
+    OrderStatus.NEW: 1,
+    OrderStatus.PARTIALLY_FILLED: 2,
+    OrderStatus.FILLED: 3,
+    OrderStatus.CANCELED: 3,
+    OrderStatus.REJECTED: 3,
+}
+
+TERMINAL_ORDER_STATUSES = {
+    OrderStatus.FILLED,
+    OrderStatus.CANCELED,
+    OrderStatus.REJECTED,
+}
+
 
 @dataclass
 class TradingProcess:
@@ -136,11 +151,12 @@ class TradingProcess:
         )
         self.event_bus.publish(order_event)
         self.logger.info(
-            "order requested order_id=%s symbol=%s side=%s quantity=%s",
+            "order requested order_id=%s symbol=%s side=%s quantity=%s status=%s",
             order.order_id,
             order.symbol,
             order.side.value,
             order.quantity,
+            order.status.value,
         )
         self._execute_order(order=order, timestamp=event.timestamp)
 
@@ -159,16 +175,36 @@ class TradingProcess:
             return
 
         state = self.get_state(order.symbol)
+        if not self._should_apply_order_status_update(order=order, event=event):
+            self.logger.info(
+                "order status discarded order_id=%s current_status=%s incoming_status=%s reason=stale_or_duplicate",
+                order.order_id,
+                order.status.value,
+                event.payload.status.value,
+            )
+            return
+
+        previous_filled_quantity = order.filled_quantity
+        filled_delta = max(event.payload.filled_quantity - previous_filled_quantity, 0)
+        if event.payload.external_order_id is not None:
+            order.external_order_id = event.payload.external_order_id
+        elif (
+            order.external_order_id is None and event.payload.order_id != order.order_id
+        ):
+            order.external_order_id = event.payload.order_id
         order.status = event.payload.status
         order.filled_quantity = event.payload.filled_quantity
         order.remaining_quantity = event.payload.remaining_quantity
         order.avg_price = event.payload.avg_price
-        if event.payload.status == OrderStatus.FILLED:
+        if (
+            event.payload.status in {OrderStatus.PARTIALLY_FILLED, OrderStatus.FILLED}
+            and filled_delta > 0
+        ):
             position = self._ensure_position(state)
             self._update_position(
                 position=position,
                 order=order,
-                filled_quantity=event.payload.filled_quantity,
+                filled_quantity=filled_delta,
                 avg_price=event.payload.avg_price or 0.0,
             )
             self._publish_position_updated(
@@ -176,12 +212,21 @@ class TradingProcess:
                 timestamp=event.timestamp,
             )
         self.logger.info(
-            "order status updated order_id=%s status=%s filled_quantity=%s remaining_quantity=%s",
+            "order status updated order_id=%s external_order_id=%s status=%s filled_quantity=%s remaining_quantity=%s",
             order.order_id,
+            order.external_order_id,
             order.status.value,
             order.filled_quantity,
             order.remaining_quantity,
         )
+
+    def apply_order_status_events(self, events: tuple[OrderStatusUpdated, ...]) -> None:
+        """再同期で取得した注文状態イベントを内部状態へ取り込む。"""
+
+        self.logger.info("order resync started count=%s", len(events))
+        for event in events:
+            self.handle_order_status(event)
+        self.logger.info("order resync completed count=%s", len(events))
 
     def _execute_order(self, order: Order, timestamp: datetime) -> None:
         if not self.auto_fill_orders:
@@ -263,6 +308,7 @@ class TradingProcess:
                 orders=[
                     Order(
                         order_id=order.order_id,
+                        external_order_id=order.external_order_id,
                         symbol=order.symbol,
                         side=order.side,
                         quantity=order.quantity,
@@ -301,6 +347,7 @@ class TradingProcess:
             orders=tuple(
                 OrderSnapshot(
                     order_id=order.order_id,
+                    external_order_id=order.external_order_id,
                     symbol=order.symbol,
                     side=order.side,
                     quantity=order.quantity,
@@ -363,9 +410,31 @@ class TradingProcess:
     def _find_order(self, order_id: str) -> Order | None:
         for state in self.states:
             for order in state.orders:
-                if order.order_id == order_id:
+                if order.order_id == order_id or order.external_order_id == order_id:
                     return order
         return None
+
+    def _should_apply_order_status_update(
+        self,
+        order: Order,
+        event: OrderStatusUpdated,
+    ) -> bool:
+        incoming_status = event.payload.status
+        if order.status in TERMINAL_ORDER_STATUSES and incoming_status != order.status:
+            return False
+        current_priority = ORDER_STATUS_PRIORITY[order.status]
+        incoming_priority = ORDER_STATUS_PRIORITY[incoming_status]
+        if incoming_priority > current_priority:
+            return True
+        if incoming_priority < current_priority:
+            return False
+        if event.payload.filled_quantity > order.filled_quantity:
+            return True
+        if event.payload.remaining_quantity < order.remaining_quantity:
+            return True
+        if order.external_order_id is None and event.payload.external_order_id:
+            return True
+        return False
 
     def _ensure_position(self, state: TradingSymbolState) -> Position:
         if state.position is None:

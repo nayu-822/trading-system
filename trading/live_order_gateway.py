@@ -60,11 +60,12 @@ class LiveOrderGateway:
             timestamp=timestamp,
             symbol=result.symbol,
             payload=OrderStatusPayload(
-                order_id=result.order_id,
+                order_id=order.order_id,
                 status=result.status,
                 filled_quantity=result.filled_quantity,
                 remaining_quantity=result.remaining_quantity,
                 avg_price=result.avg_price,
+                external_order_id=result.order_id,
             ),
         )
         self.logger.info(

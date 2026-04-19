@@ -128,8 +128,9 @@ class KabuApiClient:
         return json.loads(raw_response.decode("utf-8"))
 
     def _to_order_status(self, data: Mapping[str, Any]) -> KabuOrderStatus:
+        order_id = str(_pick(data, "order_id", "OrderID", "ID", "id"))
         return KabuOrderStatus(
-            order_id=str(_pick(data, "order_id", "OrderID", "ID", "id")),
+            order_id=order_id,
             symbol=_optional_str(_pick_optional(data, "symbol", "Symbol")),
             status=_to_order_status(_pick_optional(data, "status", "Status", "State")),
             filled_quantity=_to_int(
@@ -143,6 +144,10 @@ class KabuApiClient:
             avg_price=_to_optional_float(
                 _pick_optional(data, "avg_price", "AvgPrice", "Price")
             ),
+            external_order_id=_optional_str(
+                _pick_optional(data, "external_order_id", "ExternalOrderID")
+            )
+            or order_id,
         )
 
 

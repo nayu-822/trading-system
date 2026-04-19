@@ -43,6 +43,7 @@ class Order:
     side: OrderSide
     quantity: int
     order_type: str
+    external_order_id: str | None = None
     status: OrderStatus = OrderStatus.NEW
     price: float | None = None
     filled_quantity: int = 0
@@ -89,6 +90,7 @@ class KabuOrderStatus:
     filled_quantity: int
     remaining_quantity: int
     avg_price: float | None
+    external_order_id: str | None = None
 
 
 @dataclass(frozen=True)

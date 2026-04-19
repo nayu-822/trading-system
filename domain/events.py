@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass
 from datetime import datetime
 from enum import Enum
 from types import UnionType
@@ -77,6 +77,7 @@ class OrderStatusPayload(BasePayload):
     filled_quantity: int
     remaining_quantity: int
     avg_price: float | None
+    external_order_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -194,6 +195,12 @@ def _dataclass_from_dict(
     init_values: dict[str, Any] = {}
     for item in fields(model_type):
         if item.name not in data:
+            if item.default is not MISSING:
+                init_values[item.name] = item.default
+                continue
+            if item.default_factory is not MISSING:
+                init_values[item.name] = item.default_factory()
+                continue
             raise ValueError(f"{item.name} が不足しています")
         init_values[item.name] = _deserialize_value(item.type, data[item.name])
     return model_type(**init_values)

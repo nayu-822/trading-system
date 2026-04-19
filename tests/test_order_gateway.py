@@ -73,7 +73,8 @@ def test_live_order_gateway_sends_order_through_api_client() -> None:
     assert api_client.sent_request.order_id == "order-1"
     assert len(events) == 1
     assert isinstance(events[0], OrderStatusUpdated)
-    assert events[0].payload.order_id == "api-order-1"
+    assert events[0].payload.order_id == "order-1"
+    assert events[0].payload.external_order_id == "api-order-1"
     assert events[0].payload.status == OrderStatus.REQUESTED
     assert events[0].payload.remaining_quantity == 100
 

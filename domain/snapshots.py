@@ -49,6 +49,7 @@ class OrderSnapshot:
     """復旧に必要な注文状態。"""
 
     order_id: str
+    external_order_id: str | None
     symbol: str
     side: OrderSide
     quantity: int
@@ -140,6 +141,11 @@ def _symbol_snapshot_from_dict(data: Mapping[str, Any]) -> TradingSymbolStateSna
 def _order_snapshot_from_dict(data: Mapping[str, Any]) -> OrderSnapshot:
     return OrderSnapshot(
         order_id=str(data["order_id"]),
+        external_order_id=(
+            str(data["external_order_id"])
+            if data.get("external_order_id") is not None
+            else None
+        ),
         symbol=str(data["symbol"]),
         side=OrderSide(str(data["side"])),
         quantity=int(data["quantity"]),

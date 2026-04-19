@@ -48,8 +48,11 @@ class RestPoller:
     def poll_once(self) -> tuple[OrderStatusUpdated, ...]:
         """注文状態を1回取得して OrderStatusUpdated へ変換する。"""
 
+        self.logger.info("order resync polling started")
         order_statuses = self.api_client.get_orders(self.token)
-        return tuple(self.to_event(order_status) for order_status in order_statuses)
+        events = tuple(self.to_event(order_status) for order_status in order_statuses)
+        self.logger.info("order resync polling completed count=%s", len(events))
+        return events
 
     def to_event(self, order_status: KabuOrderStatus) -> OrderStatusUpdated:
         """構造化済み注文状態をイベントへ変換する。"""
@@ -64,6 +67,7 @@ class RestPoller:
                 filled_quantity=order_status.filled_quantity,
                 remaining_quantity=order_status.remaining_quantity,
                 avg_price=order_status.avg_price,
+                external_order_id=order_status.external_order_id,
             ),
         )
 

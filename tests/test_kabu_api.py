@@ -2,6 +2,7 @@ import json
 import logging
 import time
 from collections.abc import Callable, Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -10,8 +11,14 @@ import pytest
 from data_source.kabu_api_client import KabuApiClient, KabuApiError
 from data_source.push_client import PushClient
 from data_source.rest_poller import RestPoller
-from domain.enums import DataSourceMode, EventType, OrderSide, OrderStatus
-from domain.events import BaseEvent, MarketDataUpdated, OrderStatusUpdated
+from domain.enums import DataSourceMode, EventSource, EventType, OrderSide, OrderStatus
+from domain.events import (
+    BaseEvent,
+    EventFactory,
+    MarketDataUpdated,
+    OrderStatusPayload,
+    OrderStatusUpdated,
+)
 from domain.models import KabuApiConfig, KabuOrderRequest, KabuOrderStatus
 from infrastructure.event_bus import EventBus
 from processes.external_data_process import ExternalDataProcess
@@ -278,6 +285,39 @@ def test_external_data_process_switches_api_mode() -> None:
     assert process.rest_poller.started is True  # type: ignore[union-attr]
 
 
+def test_external_data_process_syncs_orders_once() -> None:
+    class FakeRestPoller:
+        def poll_once(self) -> tuple[OrderStatusUpdated, ...]:
+            return (
+                EventFactory(source=EventSource.EXTERNAL_DATA).create(
+                    event_type=EventType.ORDER_STATUS_UPDATED,
+                    timestamp=_timestamp(),
+                    symbol="7203",
+                    payload=OrderStatusPayload(
+                        order_id="order-1",
+                        status=OrderStatus.FILLED,
+                        filled_quantity=100,
+                        remaining_quantity=0,
+                        avg_price=1000.0,
+                    ),
+                ),
+            )
+
+    event_bus = EventBus()
+    received_events: list[BaseEvent[Any]] = []
+    event_bus.subscribe(EventType.ORDER_STATUS_UPDATED, received_events.append)
+    process = ExternalDataProcess(
+        event_bus=event_bus,
+        rest_poller=FakeRestPoller(),  # type: ignore[arg-type]
+    )
+
+    synced_count = process.sync_orders_once()
+
+    assert synced_count == 1
+    assert len(received_events) == 1
+    assert received_events[0].payload.order_id == "order-1"
+
+
 def _api_config() -> KabuApiConfig:
     return KabuApiConfig(
         base_url="http://localhost:18080/kabusapi",
@@ -285,6 +325,10 @@ def _api_config() -> KabuApiConfig:
         timeout_sec=5,
         token_env_name="KABU_API_PASSWORD",
     )
+
+
+def _timestamp() -> datetime:
+    return datetime(2026, 4, 18, tzinfo=timezone.utc)
 
 
 def _wait_until(condition: Callable[[], bool]) -> None:

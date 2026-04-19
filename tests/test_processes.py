@@ -401,6 +401,177 @@ def test_trading_process_handles_live_gateway_failure_safely(caplog) -> None:
     assert state.orders[0].status == OrderStatus.REQUESTED
 
 
+def test_live_order_keeps_requested_state_after_send() -> None:
+    class RequestedApiClient:
+        def send_order(
+            self,
+            token: str,
+            order_request: KabuOrderRequest,
+        ) -> KabuOrderResult:
+            return KabuOrderResult(
+                order_id="api-order-1",
+                symbol=order_request.symbol,
+                status=OrderStatus.REQUESTED,
+                filled_quantity=0,
+                remaining_quantity=order_request.quantity,
+                avg_price=None,
+            )
+
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        order_gateway=LiveOrderGateway(
+            api_client=RequestedApiClient(),  # type: ignore[arg-type]
+            token="token-1",
+            allowed_symbols=("7203",),
+        ),
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+
+    assert order.status == OrderStatus.REQUESTED
+    assert order.external_order_id == "api-order-1"
+    assert state.position is not None
+    assert state.position.quantity == 0
+
+
+def test_trading_process_updates_order_from_rest_status() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    order.external_order_id = "api-order-1"
+    event_bus.publish(
+        _create_order_status_event(
+            order_id="api-order-1",
+            status=OrderStatus.FILLED,
+            filled_quantity=100,
+            remaining_quantity=0,
+            avg_price=1000.0,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert order.status == OrderStatus.FILLED
+    assert state.position is not None
+    assert state.position.quantity == 100
+    assert state.position.average_price == 1000.0
+
+
+def test_trading_process_does_not_rollback_terminal_order_status() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    order.external_order_id = "api-order-1"
+    event_bus.publish(
+        _create_order_status_event(
+            order_id="api-order-1",
+            status=OrderStatus.FILLED,
+            filled_quantity=100,
+            remaining_quantity=0,
+            avg_price=1000.0,
+        )
+    )
+    event_bus.publish(
+        _create_order_status_event(
+            order_id="api-order-1",
+            status=OrderStatus.NEW,
+            filled_quantity=0,
+            remaining_quantity=100,
+            avg_price=None,
+        )
+    )
+
+    assert order.status == OrderStatus.FILLED
+    assert state.position is not None
+    assert state.position.quantity == 100
+
+
+def test_trading_process_ignores_duplicate_filled_event() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    order.external_order_id = "api-order-1"
+    filled_event = _create_order_status_event(
+        order_id="api-order-1",
+        status=OrderStatus.FILLED,
+        filled_quantity=100,
+        remaining_quantity=0,
+        avg_price=1000.0,
+    )
+    event_bus.publish(filled_event)
+    event_bus.publish(filled_event)
+
+    assert order.status == OrderStatus.FILLED
+    assert state.position is not None
+    assert state.position.quantity == 100
+
+
+def test_trading_process_resyncs_order_status_after_restore() -> None:
+    original_process = TradingProcess(
+        event_bus=EventBus(),
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+    original_process.start()
+    original_process.event_bus.publish(_create_signal_event(SignalType.BUY))
+    original_state = original_process.get_state("7203")
+    original_state.orders[0].external_order_id = "api-order-1"
+    snapshot = original_process.get_snapshot(_timestamp())
+
+    restored_process = TradingProcess(
+        event_bus=EventBus(),
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+    restored_process.restore_snapshot(snapshot)
+    restored_process.apply_order_status_events(
+        (
+            _create_order_status_event(
+                order_id="api-order-1",
+                status=OrderStatus.FILLED,
+                filled_quantity=100,
+                remaining_quantity=0,
+                avg_price=1000.0,
+                source=EventSource.EXTERNAL_DATA,
+            ),
+        )
+    )
+    restored_state = restored_process.get_state("7203")
+    restored_order = restored_state.orders[0]
+
+    assert restored_order.status == OrderStatus.FILLED
+    assert restored_state.position is not None
+    assert restored_state.position.quantity == 100
+
+
 def test_trading_process_start_stop_start_does_not_duplicate_subscription() -> None:
     event_bus = EventBus()
     trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
@@ -563,21 +734,28 @@ def _find_strategy_slot(
     raise AssertionError(f"strategy slot was not found: {symbol}")
 
 
+def _timestamp() -> datetime:
+    return datetime(2026, 4, 18, tzinfo=timezone.utc)
+
+
 def _create_order_status_event(
     order_id: str,
     filled_quantity: int,
-    avg_price: float,
+    avg_price: float | None,
+    status: OrderStatus = OrderStatus.FILLED,
+    remaining_quantity: int = 0,
+    source: EventSource = EventSource.TRADING,
 ) -> BaseEvent[Any]:
     timestamp = datetime(2026, 4, 18, tzinfo=timezone.utc)
-    return EventFactory(source=EventSource.TRADING).create(
+    return EventFactory(source=source).create(
         event_type=EventType.ORDER_STATUS_UPDATED,
         timestamp=timestamp,
         symbol="7203",
         payload=OrderStatusPayload(
             order_id=order_id,
-            status=OrderStatus.FILLED,
+            status=status,
             filled_quantity=filled_quantity,
-            remaining_quantity=0,
+            remaining_quantity=remaining_quantity,
             avg_price=avg_price,
         ),
     )
