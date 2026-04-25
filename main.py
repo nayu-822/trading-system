@@ -28,6 +28,7 @@ from infrastructure.config_validator import ConfigValidationError, validate_conf
 from infrastructure.event_bus import EventBus
 from infrastructure.file_storage import FileStorage
 from infrastructure.logger import setup_logger
+from infrastructure.repositories.position_repository import PositionRepository
 from processes.external_data_process import ExternalDataProcess
 from processes.persistence_process import PersistenceProcess
 from processes.signal_process import SignalProcess
@@ -341,6 +342,11 @@ def _build_order_gateway(
         )
         api_client = KabuApiClient(config=config.app.kabu_api)
         token = api_client.get_token()
+        position_repository = PositionRepository(
+            api_client=api_client,
+            token=token,
+            logger=logger,
+        )
         return LiveOrderGateway(
             api_client=api_client,
             token=token,
@@ -351,7 +357,10 @@ def _build_order_gateway(
                 max_order_quantity=config.app.max_order_quantity,
                 trade_symbols=config.app.trade_symbols,
                 enabled_symbols=enabled_symbols,
-                state_provider=_build_order_safety_state_provider(trading_process),
+                state_provider=_build_order_safety_state_provider(
+                    trading_process=trading_process,
+                    position_repository=position_repository,
+                ),
                 logger=logger,
             ),
         )
@@ -360,13 +369,14 @@ def _build_order_gateway(
 
 def _build_order_safety_state_provider(
     trading_process: TradingProcess | None,
+    position_repository: PositionRepository,
 ):
     def provide(symbol: str) -> OrderSafetyState:
         if trading_process is None:
             raise ValueError("trading_process is not configured")
         state = trading_process.get_state(symbol)
         return OrderSafetyState(
-            position=state.position,
+            position=position_repository.get_position(symbol),
             open_orders=tuple(state.orders),
         )
 

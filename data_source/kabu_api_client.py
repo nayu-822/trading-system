@@ -12,6 +12,7 @@ from domain.models import (
     KabuOrderRequest,
     KabuOrderResult,
     KabuOrderStatus,
+    Position,
 )
 
 HttpRequest = Callable[[str, str, Mapping[str, str], bytes | None, int], bytes]
@@ -78,6 +79,38 @@ class KabuApiClient:
             if isinstance(error, KabuApiError):
                 raise
             raise KabuApiError("kabu orders request failed") from error
+
+    def get_positions(
+        self,
+        token: str,
+        symbol: str | None = None,
+    ) -> tuple[Position, ...]:
+        """建玉一覧を取得し、構造化モデルへ変換する。"""
+
+        try:
+            response = self._request_json(
+                method="GET",
+                path="/positions",
+                headers={"X-API-KEY": token},
+                body=None,
+            )
+            if isinstance(response, list):
+                positions = response
+            elif isinstance(response, Mapping):
+                positions = response.get("Positions", response.get("positions", response))
+            else:
+                raise KabuApiError("positions response must be object or list")
+            if not isinstance(positions, list):
+                raise KabuApiError("positions response must be list")
+            converted = tuple(self._to_position(position) for position in positions)
+            if symbol is None:
+                return converted
+            return tuple(position for position in converted if position.symbol == symbol)
+        except Exception as error:
+            self.logger.exception("kabu positions request failed symbol=%s", symbol or "")
+            if isinstance(error, KabuApiError):
+                raise
+            raise KabuApiError("kabu positions request failed") from error
 
     def send_order(
         self,
@@ -148,6 +181,35 @@ class KabuApiClient:
                 _pick_optional(data, "external_order_id", "ExternalOrderID")
             )
             or order_id,
+        )
+
+    def _to_position(self, data: Mapping[str, Any]) -> Position:
+        symbol = str(_pick(data, "symbol", "Symbol"))
+        side = _pick(data, "side", "Side")
+        quantity = _to_signed_quantity(
+            side=side,
+            quantity=_pick(
+                data,
+                "quantity",
+                "Quantity",
+                "Qty",
+                "HoldQty",
+                "LeavesQty",
+            ),
+        )
+        average_price = _to_optional_float(
+            _pick_optional(
+                data,
+                "avg_price",
+                "AvgPrice",
+                "Price",
+                "HoldPrice",
+            )
+        )
+        return Position(
+            symbol=symbol,
+            quantity=quantity,
+            average_price=average_price or 0.0,
         )
 
 
@@ -257,6 +319,16 @@ def _to_optional_float(value: Any) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def _to_signed_quantity(side: Any, quantity: Any) -> int:
+    normalized_side = str(side).upper()
+    normalized_quantity = int(quantity)
+    if normalized_side in {"BUY", "LONG", "2"}:
+        return normalized_quantity
+    if normalized_side in {"SELL", "SHORT", "1"}:
+        return -normalized_quantity
+    raise KabuApiError(f"unsupported position side={side}")
 
 
 def _to_order_status(value: Any) -> OrderStatus:

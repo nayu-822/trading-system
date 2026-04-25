@@ -142,6 +142,71 @@ def test_kabu_api_client_sends_order_and_returns_result() -> None:
     assert result.remaining_quantity == 100
 
 
+def test_kabu_api_client_gets_positions_and_filters_by_symbol() -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_request(
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: bytes | None,
+        timeout_sec: int,
+    ) -> bytes:
+        calls.append((method, url))
+        return json.dumps(
+            [
+                {
+                    "Symbol": "7203",
+                    "Side": "BUY",
+                    "HoldQty": 100,
+                    "Price": 1000.0,
+                },
+                {
+                    "Symbol": "6758",
+                    "Side": "SELL",
+                    "HoldQty": 50,
+                    "Price": 2000.0,
+                },
+            ]
+        ).encode("utf-8")
+
+    client = KabuApiClient(config=_api_config(), http_request=fake_request)
+
+    positions = client.get_positions(token="token-1", symbol="7203")
+
+    assert calls == [("GET", "http://localhost:18081/kabusapi/positions")]
+    assert len(positions) == 1
+    assert positions[0].symbol == "7203"
+    assert positions[0].quantity == 100
+    assert positions[0].average_price == 1000.0
+
+
+def test_kabu_api_client_ignores_different_symbol_positions() -> None:
+    def fake_request(
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: bytes | None,
+        timeout_sec: int,
+    ) -> bytes:
+        return json.dumps(
+            [
+                {
+                    "Symbol": "6758",
+                    "Side": "BUY",
+                    "HoldQty": 100,
+                    "Price": 1000.0,
+                },
+            ]
+        ).encode("utf-8")
+
+    client = KabuApiClient(config=_api_config(), http_request=fake_request)
+
+    positions = client.get_positions(token="token-1", symbol="7203")
+
+    assert positions == ()
+
+
 def test_push_client_converts_message_to_market_data_event() -> None:
     push_client = PushClient(config=_api_config())
 
