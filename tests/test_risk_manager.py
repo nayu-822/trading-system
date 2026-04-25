@@ -1,6 +1,14 @@
 from datetime import date, datetime, timezone
 
-from domain.enums import EventSource, EventType, OrderSide, SignalType, StrategyType
+from domain.enums import (
+    EventSource,
+    EventType,
+    KabuApiEnvironment,
+    OrderSide,
+    SignalType,
+    StrategyType,
+    TradingMode,
+)
 from domain.events import BaseEvent, EventFactory, MarketDataPayload, SignalPayload
 from domain.models import (
     AccountState,
@@ -15,6 +23,7 @@ from domain.models import (
 from infrastructure.event_bus import EventBus
 from processes.trading_process import TradingProcess
 from trading.live_order_gateway import LiveOrderGateway
+from trading.order_safety_validator import OrderSafetyState, OrderSafetyValidator
 from trading.risk_manager import RiskManager
 
 
@@ -163,6 +172,16 @@ def test_trading_process_applies_risk_manager_in_live_mode() -> None:
             api_client=api_client,  # type: ignore[arg-type]
             token="token-1",
             allowed_symbols=("7203",),
+            safety_validator=OrderSafetyValidator(
+                trading_mode=TradingMode.LIVE,
+                kabu_api_environment=KabuApiEnvironment.LIVE,
+                max_order_quantity=100,
+                trade_symbols=("7203",),
+                enabled_symbols=("7203",),
+                state_provider=lambda symbol: OrderSafetyState(
+                    position=Position(symbol=symbol)
+                ),
+            ),
         ),
     )
 

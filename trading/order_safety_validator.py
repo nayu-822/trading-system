@@ -37,7 +37,7 @@ class OrderSafetyDecision:
 
 
 def _default_state_provider(symbol: str) -> OrderSafetyState:
-    return OrderSafetyState(position=Position(symbol=symbol))
+    raise OrderSafetyError(f"position state provider is not configured: {symbol}")
 
 
 @dataclass
@@ -94,35 +94,42 @@ class OrderSafetyValidator:
             return OrderSafetyDecision(False, "incomplete order exists")
 
         position_quantity = state.position.quantity
-        if order.is_exit:
-            if position_quantity == 0:
+        if position_quantity == 0:
+            if order.is_exit:
                 return OrderSafetyDecision(False, "exit target position does not exist")
-            if order.side == OrderSide.SELL and position_quantity <= 0:
-                return OrderSafetyDecision(
-                    False, "sell exit requires long position"
-                )
-            if order.side == OrderSide.BUY and position_quantity >= 0:
-                return OrderSafetyDecision(
-                    False, "buy exit requires short position"
-                )
-        if position_quantity > 0 and order.side == OrderSide.BUY:
-            return OrderSafetyDecision(False, "long position already exists")
-        if position_quantity < 0 and order.side == OrderSide.SELL:
-            return OrderSafetyDecision(False, "short position already exists")
-        if (
-            position_quantity > 0
-            and order.side == OrderSide.SELL
-            and order.quantity > abs(position_quantity)
-        ):
-            return OrderSafetyDecision(False, "close quantity exceeds long position")
-        if (
-            position_quantity < 0
-            and order.side == OrderSide.BUY
-            and order.quantity > abs(position_quantity)
-        ):
-            return OrderSafetyDecision(False, "close quantity exceeds short position")
+            return OrderSafetyDecision(True)
 
-        return OrderSafetyDecision(True)
+        if position_quantity > 0:
+            if order.is_exit:
+                if order.side != OrderSide.SELL:
+                    return OrderSafetyDecision(
+                        False, "long position exit requires sell order"
+                    )
+                if order.quantity > abs(position_quantity):
+                    return OrderSafetyDecision(
+                        False, "close quantity exceeds long position"
+                    )
+                return OrderSafetyDecision(True)
+            if order.side == OrderSide.BUY:
+                return OrderSafetyDecision(False, "long position already exists")
+            return OrderSafetyDecision(
+                False, "non-exit sell cannot reduce long position"
+            )
+
+        if order.is_exit:
+            if order.side != OrderSide.BUY:
+                return OrderSafetyDecision(
+                    False, "short position exit requires buy order"
+                )
+            if order.quantity > abs(position_quantity):
+                return OrderSafetyDecision(
+                    False, "close quantity exceeds short position"
+                )
+            return OrderSafetyDecision(True)
+
+        if order.side == OrderSide.SELL:
+            return OrderSafetyDecision(False, "short position already exists")
+        return OrderSafetyDecision(False, "non-exit buy cannot reduce short position")
 
     def _has_incomplete_order(
         self,

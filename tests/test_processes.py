@@ -8,10 +8,12 @@ from domain.enums import (
     DataSourceMode,
     EventSource,
     EventType,
+    KabuApiEnvironment,
     OrderSide,
     OrderStatus,
     SignalType,
     StrategyType,
+    TradingMode,
 )
 from domain.events import (
     BaseEvent,
@@ -27,6 +29,7 @@ from domain.models import (
     IndicatorValue,
     KabuOrderRequest,
     KabuOrderResult,
+    Position,
     SignalStrategyConfig,
     TradingSymbolConfig,
 )
@@ -36,6 +39,7 @@ from processes.signal_process import SignalProcess, SignalStrategySlot
 from processes.trading_process import TradingProcess
 from strategy.trend_strategy import TrendStrategy
 from trading.live_order_gateway import LiveOrderGateway
+from trading.order_safety_validator import OrderSafetyState, OrderSafetyValidator
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
@@ -385,6 +389,7 @@ def test_trading_process_handles_live_gateway_failure_safely(caplog) -> None:
             api_client=FailingApiClient(),  # type: ignore[arg-type]
             token="token-1",
             allowed_symbols=("7203",),
+            safety_validator=_live_validator(),
         ),
     )
     received_statuses: list[BaseEvent[Any]] = []
@@ -427,6 +432,7 @@ def test_live_order_keeps_requested_state_after_send() -> None:
             api_client=RequestedApiClient(),  # type: ignore[arg-type]
             token="token-1",
             allowed_symbols=("7203",),
+            safety_validator=_live_validator(),
         ),
     )
 
@@ -760,4 +766,15 @@ def _create_order_status_event(
             remaining_quantity=remaining_quantity,
             avg_price=avg_price,
         ),
+    )
+
+
+def _live_validator() -> OrderSafetyValidator:
+    return OrderSafetyValidator(
+        trading_mode=TradingMode.LIVE,
+        kabu_api_environment=KabuApiEnvironment.LIVE,
+        max_order_quantity=100,
+        trade_symbols=("7203",),
+        enabled_symbols=("7203",),
+        state_provider=lambda symbol: OrderSafetyState(position=Position(symbol=symbol)),
     )

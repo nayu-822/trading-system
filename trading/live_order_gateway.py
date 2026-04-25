@@ -16,7 +16,7 @@ class LiveOrderGateway:
     api_client: KabuApiClient
     token: str
     allowed_symbols: tuple[str, ...]
-    safety_validator: OrderSafetyValidator | None = None
+    safety_validator: OrderSafetyValidator
     event_factory: EventFactory = field(
         default_factory=lambda: EventFactory(source=EventSource.TRADING)
     )
@@ -30,8 +30,9 @@ class LiveOrderGateway:
         """注文を API へ送信し、受付状態イベントへ変換する。"""
 
         self._validate_order(order)
-        if self.safety_validator is not None:
-            self.safety_validator.validate_order(order)
+        if self.safety_validator is None:
+            raise ValueError("safety_validator is required")
+        self.safety_validator.validate_order(order)
         self.logger.info(
             "LIVE MODE order request gateway=LiveOrderGateway order_id=%s symbol=%s side=%s quantity=%s order_type=%s",
             order.order_id,
