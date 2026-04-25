@@ -100,3 +100,29 @@ def test_build_order_safety_state_provider_uses_synced_open_orders() -> None:
     assert state.position.symbol == "7203"
     assert len(state.open_orders) == 1
     assert state.open_orders[0].order_id == "api-order-1"
+
+
+def test_build_order_safety_state_provider_rejects_when_trading_is_halted() -> None:
+    class FakePositionRepository:
+        def get_position(self, symbol: str) -> Position:
+            raise AssertionError("get_position should not be called")
+
+    class FakeOrderStatusRepository:
+        def get_open_orders(self, symbol: str):
+            raise AssertionError("get_open_orders should not be called")
+
+    config = load_config(Path("config"))
+    risk_manager = app_main._build_risk_manager(config)
+    risk_manager.activate_kill_switch(app_main.TradingHaltReason.POSITION_MISMATCH)
+    provider = app_main._build_order_safety_state_provider(
+        position_repository=FakePositionRepository(),  # type: ignore[arg-type]
+        order_status_repository=FakeOrderStatusRepository(),  # type: ignore[arg-type]
+        risk_manager=risk_manager,
+    )
+
+    try:
+        provider("7203")
+    except ValueError as error:
+        assert "position_mismatch" in str(error)
+    else:
+        raise AssertionError("ValueError was not raised")

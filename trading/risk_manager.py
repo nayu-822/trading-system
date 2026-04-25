@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Callable
 
-from domain.enums import OrderSide
+from domain.enums import OrderSide, TradingHaltReason
 from domain.models import (
     AccountState,
     RiskConfig,
@@ -46,7 +46,7 @@ class RiskManager:
             self.logger.warning("entry rejected symbol=%s reason=loss_streak", symbol)
             return False
         if self._drawdown_exceeded():
-            self.activate_kill_switch("drawdown")
+            self.activate_kill_switch(TradingHaltReason.DRAWDOWN)
             self.logger.warning("entry rejected symbol=%s reason=drawdown", symbol)
             return False
         if self._open_position_count(current_state) >= self.config.max_positions:
@@ -114,7 +114,7 @@ class RiskManager:
                     self.state.consecutive_losses,
                 )
             if self.state.daily_realized_loss >= self.config.max_daily_loss:
-                self.activate_kill_switch("max_daily_loss")
+                self.activate_kill_switch(TradingHaltReason.MAX_DAILY_LOSS)
         elif trade_result.realized_pnl > 0:
             self.state.consecutive_wins += 1
             self.state.consecutive_losses = 0
@@ -142,7 +142,7 @@ class RiskManager:
         self.state.api_error_count += 1
         self.logger.warning("api error counted count=%s", self.state.api_error_count)
         if self.state.api_error_count >= self.config.api_error_limit:
-            self.activate_kill_switch("api_error_limit")
+            self.activate_kill_switch(TradingHaltReason.API_ERROR_LIMIT)
 
     def update_equity(self, current_equity: float) -> None:
         """資産状態と最大ドローダウンを更新する。"""
@@ -156,17 +156,20 @@ class RiskManager:
             self._drawdown(),
         )
         if self._drawdown_exceeded():
-            self.activate_kill_switch("drawdown")
+            self.activate_kill_switch(TradingHaltReason.DRAWDOWN)
 
-    def activate_kill_switch(self, reason: str) -> None:
+    def activate_kill_switch(self, reason: TradingHaltReason) -> None:
         """強制停止を有効化する。"""
 
         if not self.config.kill_switch_enabled:
-            self.logger.warning("kill switch skipped reason=%s disabled=true", reason)
+            self.logger.warning(
+                "kill switch skipped reason=%s disabled=true", reason.value
+            )
             return
+        self.state.trading_halt_reason = reason
         if not self.state.kill_switch_active:
             self.state.kill_switch_active = True
-            self.logger.error("kill switch activated reason=%s", reason)
+            self.logger.error("kill switch activated reason=%s", reason.value)
 
     def restore_state(self, state: RiskControlState) -> None:
         """snapshot 由来のリスク状態を復元する。"""

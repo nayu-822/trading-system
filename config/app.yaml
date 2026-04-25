@@ -10,6 +10,8 @@ trade_symbols:
   - "1306"
   - "1321"
   - "1570"
+position_reconciliation_enabled: true
+position_average_price_tolerance: 0.01
 kabu_api_environment: paper
 api_timeout_sec: 5
 token_env_name: KABU_API_PASSWORD

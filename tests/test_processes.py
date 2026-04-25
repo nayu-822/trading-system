@@ -13,6 +13,7 @@ from domain.enums import (
     OrderStatus,
     SignalType,
     StrategyType,
+    TradingHaltReason,
     TradingMode,
 )
 from domain.events import (
@@ -274,6 +275,23 @@ def test_trading_process_ignores_same_direction_signal_when_position_exists() ->
     trading_process.start()
     event_bus.subscribe(EventType.ORDER_REQUESTED, received_events.append)
     event_bus.publish(_create_signal_event(SignalType.BUY))
+
+    assert received_events == []
+
+
+def test_trading_process_ignores_all_signals_when_position_mismatch_halts_trading() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    assert trading_process.risk_manager is not None
+    trading_process.risk_manager.activate_kill_switch(
+        TradingHaltReason.POSITION_MISMATCH
+    )
+    received_events: list[BaseEvent[Any]] = []
+
+    trading_process.start()
+    event_bus.subscribe(EventType.ORDER_REQUESTED, received_events.append)
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    event_bus.publish(_create_signal_event(SignalType.EXIT))
 
     assert received_events == []
 

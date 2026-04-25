@@ -188,6 +188,12 @@ def _build_app_config(data: dict[str, Any]) -> AppConfig:
         push_enabled=bool(data["push_enabled"]),
         max_order_quantity=int(data.get("max_order_quantity", 1)),
         trade_symbols=tuple(str(symbol) for symbol in data.get("trade_symbols", [])),
+        position_reconciliation_enabled=bool(
+            data.get("position_reconciliation_enabled", True)
+        ),
+        position_average_price_tolerance=float(
+            data.get("position_average_price_tolerance", 0.01)
+        ),
         kabu_api=KabuApiConfig(
             environment=environment,
             base_url=base_url,

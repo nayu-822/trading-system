@@ -19,6 +19,8 @@ def test_load_config_returns_structured_model() -> None:
     assert config.app.log_level
     assert config.app.max_order_quantity >= 1
     assert len(config.app.trade_symbols) >= 1
+    assert isinstance(config.app.position_reconciliation_enabled, bool)
+    assert config.app.position_average_price_tolerance >= 0
     assert config.app.kabu_api.base_url
     assert config.app.kabu_api.push_url
     assert config.app.kabu_api.timeout_sec >= 1
@@ -274,6 +276,8 @@ def _build_test_app_config(
         "push_enabled": False,
         "max_order_quantity": 1,
         "trade_symbols": ["7203"],
+        "position_reconciliation_enabled": True,
+        "position_average_price_tolerance": 0.01,
         "api_timeout_sec": 5,
         "token_env_name": "KABU_API_PASSWORD",
         "snapshot_enabled": False,

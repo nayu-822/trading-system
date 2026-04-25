@@ -5,6 +5,7 @@ from domain.enums import (
     EventType,
     KabuApiEnvironment,
     OrderSide,
+    TradingHaltReason,
     SignalType,
     StrategyType,
     TradingMode,
@@ -94,7 +95,7 @@ def test_risk_manager_stops_when_drawdown_exceeds_limit() -> None:
 def test_risk_manager_kill_switch_rejects_entry() -> None:
     risk_manager = _risk_manager()
 
-    risk_manager.activate_kill_switch("test")
+    risk_manager.activate_kill_switch(TradingHaltReason.POSITION_MISMATCH)
 
     assert risk_manager.can_enter("7203", OrderSide.BUY, ()) is False
 

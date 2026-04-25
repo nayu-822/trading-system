@@ -4,7 +4,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import uuid4
 
-from domain.enums import EventSource, EventType, OrderSide, OrderStatus, SignalType
+from domain.enums import (
+    EventSource,
+    EventType,
+    OrderSide,
+    OrderStatus,
+    SignalType,
+)
 from domain.events import (
     BaseEvent,
     EventFactory,
@@ -78,6 +84,7 @@ class TradingProcess:
     states: list[TradingSymbolState] = field(default_factory=list)
     latest_prices: list[tuple[str, float]] = field(default_factory=list)
     order_status_syncer: Callable[[], int] | None = None
+    position_reconciliation_handler: Callable[[str], None] | None = None
     order_fill_reconciler: OrderFillReconciler = field(
         default_factory=OrderFillReconciler
     )
@@ -134,6 +141,20 @@ class TradingProcess:
             return
         if event.symbol is None:
             self.logger.warning("signal ignored because symbol is empty")
+            return
+        if (
+            self.risk_manager is not None
+            and self.risk_manager.state.kill_switch_active
+        ):
+            self.logger.warning(
+                "signal ignored because trading is halted symbol=%s reason=%s",
+                event.symbol,
+                (
+                    self.risk_manager.state.trading_halt_reason.value
+                    if self.risk_manager.state.trading_halt_reason is not None
+                    else "kill_switch"
+                ),
+            )
             return
 
         self._set_latest_price_from_signal(event)
@@ -308,6 +329,7 @@ class TradingProcess:
         )
         if order.status in TERMINAL_ORDER_STATUSES:
             self._remove_order(state=state, order=order)
+        self._reconcile_position_after_order_status(order.symbol)
 
     def apply_order_status_events(self, events: tuple[OrderStatusUpdated, ...]) -> None:
         """再同期で取得した注文状態イベントを内部状態へ取り込む。"""
@@ -461,6 +483,7 @@ class TradingProcess:
                     daily_realized_loss=snapshot.risk_state.daily_realized_loss,
                     api_error_count=snapshot.risk_state.api_error_count,
                     business_date=snapshot.risk_state.business_date,
+                    trading_halt_reason=snapshot.risk_state.trading_halt_reason,
                 )
             )
 
@@ -531,6 +554,7 @@ class TradingProcess:
             daily_realized_loss=self.risk_manager.state.daily_realized_loss,
             api_error_count=self.risk_manager.state.api_error_count,
             business_date=self.risk_manager.state.business_date,
+            trading_halt_reason=self.risk_manager.state.trading_halt_reason,
         )
 
     def _has_open_order(self, state: TradingSymbolState) -> bool:
@@ -756,6 +780,26 @@ class TradingProcess:
 
         if order in state.orders:
             state.orders.remove(order)
+
+    def _reconcile_position_after_order_status(self, symbol: str) -> None:
+        """注文状態反映後に建玉突合を実行する。
+
+        Args:
+            symbol: 突合対象の銘柄コード。
+
+        Returns:
+            なし。
+        """
+
+        if self.position_reconciliation_handler is None:
+            return
+        try:
+            self.position_reconciliation_handler(symbol)
+        except Exception:
+            self.logger.exception(
+                "position reconciliation failed after order status symbol=%s",
+                symbol,
+            )
 
     def _update_position(
         self,

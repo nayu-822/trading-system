@@ -8,6 +8,7 @@ from domain.enums import (
     OrderStatus,
     RunMode,
     StrategyType,
+    TradingHaltReason,
     TradingMode,
 )
 
@@ -75,6 +76,7 @@ class RiskControlState:
     daily_realized_loss: float = 0.0
     api_error_count: int = 0
     business_date: str | None = None
+    trading_halt_reason: TradingHaltReason | None = None
 
 
 @dataclass
@@ -208,6 +210,8 @@ class AppConfig:
     push_enabled: bool
     max_order_quantity: int
     trade_symbols: tuple[str, ...]
+    position_reconciliation_enabled: bool
+    position_average_price_tolerance: float
     kabu_api: KabuApiConfig
     snapshot_enabled: bool
     snapshot_dir: str

@@ -29,6 +29,15 @@ class KabuApiEnvironment(str, Enum):
     LIVE = "live"
 
 
+class TradingHaltReason(str, Enum):
+    """取引停止の理由を表す。"""
+
+    API_ERROR_LIMIT = "api_error_limit"
+    DRAWDOWN = "drawdown"
+    MAX_DAILY_LOSS = "max_daily_loss"
+    POSITION_MISMATCH = "position_mismatch"
+
+
 class EventType(str, Enum):
     """システム内で扱うイベント種別。"""
 

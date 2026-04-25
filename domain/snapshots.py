@@ -4,7 +4,13 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from domain.enums import OrderSide, OrderStatus, SignalType, StrategyType
+from domain.enums import (
+    OrderSide,
+    OrderStatus,
+    SignalType,
+    StrategyType,
+    TradingHaltReason,
+)
 
 
 @dataclass(frozen=True)
@@ -112,6 +118,7 @@ class RiskControlSnapshot:
     daily_realized_loss: float
     api_error_count: int
     business_date: str | None
+    trading_halt_reason: TradingHaltReason | None = None
 
 
 @dataclass(frozen=True)
@@ -236,6 +243,11 @@ def _risk_snapshot_from_dict(value: Any) -> RiskControlSnapshot | None:
         business_date=(
             str(value["business_date"])
             if value.get("business_date") is not None
+            else None
+        ),
+        trading_halt_reason=(
+            TradingHaltReason(str(value["trading_halt_reason"]))
+            if value.get("trading_halt_reason") is not None
             else None
         ),
     )

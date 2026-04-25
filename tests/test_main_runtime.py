@@ -413,6 +413,79 @@ def test_runtime_stop_flushes_before_workers_stop(monkeypatch) -> None:
     ]
 
 
+def test_runtime_reconcile_positions_keeps_trading_when_positions_match(monkeypatch) -> None:
+    snapshot_dir = _test_dir("position_match")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(_FakeExternalDataProcess(events=())),
+    )
+    runtime = app_main.build_application_runtime(config=config)
+    runtime.position_reconciliation_service = _FakePositionReconciliationService()
+
+    reconciled = runtime.reconcile_positions(symbols=("7203",))
+
+    assert reconciled == 1
+    assert runtime.trading_process.risk_manager is not None
+    assert runtime.trading_process.risk_manager.state.kill_switch_active is False
+
+
+def test_runtime_reconcile_positions_halts_trading_when_positions_mismatch(
+    monkeypatch,
+) -> None:
+    snapshot_dir = _test_dir("position_mismatch")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(_FakeExternalDataProcess(events=())),
+    )
+    runtime = app_main.build_application_runtime(config=config)
+    runtime.position_reconciliation_service = _FailingPositionReconciliationService()
+
+    reconciled = runtime.reconcile_positions(symbols=("7203",))
+
+    assert reconciled == 0
+    assert runtime.trading_process.risk_manager is not None
+    assert runtime.trading_process.risk_manager.state.kill_switch_active is True
+    assert (
+        runtime.trading_process.risk_manager.state.trading_halt_reason
+        == app_main.TradingHaltReason.POSITION_MISMATCH
+    )
+
+
+def test_runtime_reconcile_positions_skips_when_disabled(monkeypatch) -> None:
+    snapshot_dir = _test_dir("position_reconcile_disabled")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+    )
+    config = replace(
+        config,
+        app=replace(config.app, position_reconciliation_enabled=False),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(_FakeExternalDataProcess(events=())),
+    )
+    runtime = app_main.build_application_runtime(config=config)
+    service = _FakePositionReconciliationService()
+    runtime.position_reconciliation_service = service
+
+    reconciled = runtime.reconcile_positions(symbols=("7203",))
+
+    assert reconciled == 0
+    assert service.call_count == 0
+
+
 def test_initialize_application_flushes_when_keyboard_interrupt(monkeypatch) -> None:
     config = _runtime_config(
         data_source_mode=DataSourceMode.API,
@@ -507,6 +580,9 @@ class _FakeLogger:
     def info(self, *args: Any, **kwargs: Any) -> None:
         pass
 
+    def exception(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
 
 def _fake_external_builder(
     fake_external: _FakeExternalDataProcess,
@@ -516,6 +592,19 @@ def _fake_external_builder(
         return fake_external
 
     return build
+
+
+class _FakePositionReconciliationService:
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def reconcile(self, symbol: str, internal_position) -> None:
+        self.call_count += 1
+
+
+class _FailingPositionReconciliationService:
+    def reconcile(self, symbol: str, internal_position) -> None:
+        raise app_main.PositionReconciliationError(f"mismatch: {symbol}")
 
 
 def _runtime_config(

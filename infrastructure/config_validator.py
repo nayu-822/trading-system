@@ -53,6 +53,10 @@ def _validate_app_config(config: SystemConfig) -> None:
         raise ConfigValidationError("rest_poll_interval_sec は1以上で指定してください")
     if config.app.max_order_quantity < 1:
         raise ConfigValidationError("max_order_quantity は1以上で指定してください")
+    if config.app.position_average_price_tolerance < 0:
+        raise ConfigValidationError(
+            "position_average_price_tolerance は0以上で指定してください"
+        )
     if not config.app.trade_symbols:
         raise ConfigValidationError("trade_symbols は1件以上指定してください")
     if any(not symbol for symbol in config.app.trade_symbols):

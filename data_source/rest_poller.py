@@ -10,6 +10,7 @@ from domain.models import Order
 from infrastructure.repositories.order_status_repository import OrderStatusRepository
 
 OrderStatusHandler = Callable[[OrderStatusUpdated], None]
+PollCycleHandler = Callable[[], None]
 
 
 @dataclass
@@ -23,6 +24,7 @@ class RestPoller:
         default_factory=lambda: EventFactory(source=EventSource.EXTERNAL_DATA)
     )
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
+    on_cycle_completed: PollCycleHandler | None = None
     _stop_event: Event = field(default_factory=Event, init=False)
     _worker: Thread | None = field(default=None, init=False)
 
@@ -91,6 +93,8 @@ class RestPoller:
                 for event in self.poll_once():
                     if self.on_event is not None:
                         self.on_event(event)
+                if self.on_cycle_completed is not None:
+                    self.on_cycle_completed()
             except Exception:
                 self.logger.exception("rest polling failed")
             self._stop_event.wait(self.interval_sec)

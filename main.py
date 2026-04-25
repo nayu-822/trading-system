@@ -13,6 +13,7 @@ from domain.enums import (
     EventType,
     KabuApiEnvironment,
     StrategyType,
+    TradingHaltReason,
     TradingMode,
 )
 from domain.events import EventFactory, SystemStartedPayload
@@ -39,6 +40,10 @@ from trading.live_order_gateway import LiveOrderGateway
 from trading.mock_order_gateway import MockOrderGateway
 from trading.order_gateway import OrderGateway
 from trading.order_safety_validator import OrderSafetyState, OrderSafetyValidator
+from trading.position_reconciliation_service import (
+    PositionReconciliationError,
+    PositionReconciliationService,
+)
 from trading.risk_manager import RiskManager
 
 CONFIG_DIR = Path("config")
@@ -63,6 +68,7 @@ class ApplicationRuntime:
     snapshot_process: SnapshotProcess
     external_data_process: ExternalDataProcess
     clock: RealClock
+    position_reconciliation_service: PositionReconciliationService | None = None
     csv_path: Path | None = None
     restored_snapshot: bool = False
     _started: bool = False
@@ -156,7 +162,49 @@ class ApplicationRuntime:
                 raise
             return 0
         self.logger.info("startup order resync completed count=%s", synced_count)
+        self.reconcile_positions()
         return synced_count
+
+    def reconcile_positions(self, symbols: tuple[str, ...] | None = None) -> int:
+        """内部建玉とAPI実建玉を突合する。
+
+        Args:
+            symbols: 対象銘柄一覧。省略時は有効銘柄すべてを対象にする。
+
+        Returns:
+            int: 突合を実行した銘柄数。
+        """
+
+        if (
+            self.position_reconciliation_service is None
+            or not self.config.app.position_reconciliation_enabled
+            or self.config.app.data_source_mode != DataSourceMode.API
+        ):
+            return 0
+
+        target_symbols = symbols or tuple(
+            symbol.code for symbol in self.config.symbols if symbol.enabled
+        )
+        reconciled_count = 0
+        for symbol in target_symbols:
+            state = self.trading_process.get_state(symbol)
+            try:
+                self.position_reconciliation_service.reconcile(
+                    symbol=symbol,
+                    internal_position=state.position,
+                )
+            except PositionReconciliationError:
+                self.logger.exception(
+                    "position reconciliation failed symbol=%s",
+                    symbol,
+                )
+                if self.trading_process.risk_manager is not None:
+                    self.trading_process.risk_manager.activate_kill_switch(
+                        TradingHaltReason.POSITION_MISMATCH
+                    )
+                continue
+            reconciled_count += 1
+        return reconciled_count
 
     def wait(self, stop_event: Event | None = None) -> None:
         """API モードでは停止要求まで待機し、CSV モードでは即時に戻る。"""
@@ -274,6 +322,10 @@ def build_application_runtime(
         config=config,
         logger=logger,
     )
+    position_reconciliation_service = _build_position_reconciliation_service(
+        config=config,
+        logger=logger,
+    )
     if (
         config.app.data_source_mode == DataSourceMode.API
         and config.app.trading_mode == TradingMode.LIVE
@@ -299,7 +351,7 @@ def build_application_runtime(
         event_threshold=1,
         interval_sec=config.app.snapshot_interval_sec,
     )
-    return ApplicationRuntime(
+    runtime = ApplicationRuntime(
         config=config,
         event_bus=event_bus,
         logger=logger,
@@ -309,8 +361,18 @@ def build_application_runtime(
         snapshot_process=snapshot_process,
         external_data_process=external_data_process,
         clock=clock,
+        position_reconciliation_service=position_reconciliation_service,
         csv_path=csv_path,
     )
+    trading_process.position_reconciliation_handler = (
+        lambda symbol: runtime.reconcile_positions(symbols=(symbol,))
+    )
+    rest_poller = getattr(external_data_process, "rest_poller", None)
+    if rest_poller is not None:
+        rest_poller.on_cycle_completed = (
+            lambda: runtime.reconcile_positions()
+        )
+    return runtime
 
 
 def _build_external_data_process(
@@ -385,6 +447,11 @@ def _build_order_gateway(
                 state_provider=_build_order_safety_state_provider(
                     position_repository=position_repository,
                     order_status_repository=order_status_repository,
+                    risk_manager=(
+                        trading_process.risk_manager
+                        if trading_process is not None
+                        else None
+                    ),
                 ),
                 logger=logger,
             ),
@@ -395,6 +462,7 @@ def _build_order_gateway(
 def _build_order_safety_state_provider(
     position_repository: PositionRepository,
     order_status_repository: OrderStatusRepository,
+    risk_manager: RiskManager | None = None,
 ):
     """注文前ガード用の状態取得関数を組み立てる。
 
@@ -406,12 +474,57 @@ def _build_order_safety_state_provider(
     """
 
     def provide(symbol: str) -> OrderSafetyState:
+        if risk_manager is not None and risk_manager.state.kill_switch_active:
+            reason = (
+                risk_manager.state.trading_halt_reason.value
+                if risk_manager.state.trading_halt_reason is not None
+                else "kill_switch"
+            )
+            raise ValueError(f"trading is halted: {reason}")
         return OrderSafetyState(
             position=position_repository.get_position(symbol),
             open_orders=tuple(order_status_repository.get_open_orders(symbol=symbol)),
         )
 
     return provide
+
+
+def _build_position_reconciliation_service(
+    config: SystemConfig,
+    logger: logging.Logger,
+) -> PositionReconciliationService | None:
+    """API実建玉突合サービスを構築する。
+
+    Args:
+        config: システム設定。
+        logger: 利用するロガー。
+
+    Returns:
+        PositionReconciliationService | None: 利用可能な場合は突合サービス。
+    """
+
+    if (
+        not config.app.position_reconciliation_enabled
+        or config.app.data_source_mode != DataSourceMode.API
+    ):
+        return None
+    try:
+        api_client = KabuApiClient(config=config.app.kabu_api)
+        token = api_client.get_token()
+    except KabuApiError:
+        logger.exception("position reconciliation initialization failed")
+        if config.app.trading_mode == TradingMode.LIVE:
+            raise
+        return None
+    return PositionReconciliationService(
+        position_repository=PositionRepository(
+            api_client=api_client,
+            token=token,
+            logger=logger,
+        ),
+        average_price_tolerance=config.app.position_average_price_tolerance,
+        logger=logger,
+    )
 
 
 def _ensure_live_order_allowed(config: SystemConfig) -> None:
