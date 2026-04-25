@@ -314,6 +314,95 @@ def test_live_order_gateway_rejects_when_position_state_is_unavailable() -> None
         gateway.place_order(order=_market_buy_order(), timestamp=_timestamp())
 
 
+def test_live_order_gateway_allows_new_buy_when_position_is_zero() -> None:
+    class FakeApiClient:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def send_order(self, token: str, order_request: KabuOrderRequest) -> KabuOrderResult:
+            self.call_count += 1
+            return KabuOrderResult(
+                order_id="api-order-1",
+                symbol=order_request.symbol,
+                status=OrderStatus.REQUESTED,
+                filled_quantity=0,
+                remaining_quantity=order_request.quantity,
+                avg_price=None,
+            )
+
+    api_client = FakeApiClient()
+    gateway = LiveOrderGateway(
+        api_client=api_client,  # type: ignore[arg-type]
+        token="token-1",
+        allowed_symbols=("7203",),
+        safety_validator=_validator(
+            state_provider=lambda symbol: OrderSafetyState(
+                position=Position(symbol=symbol, quantity=0),
+            )
+        ),
+    )
+
+    gateway.place_order(order=_market_buy_order(), timestamp=_timestamp())
+
+    assert api_client.call_count == 1
+
+
+def test_live_order_gateway_allows_new_sell_when_position_is_zero() -> None:
+    class FakeApiClient:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def send_order(self, token: str, order_request: KabuOrderRequest) -> KabuOrderResult:
+            self.call_count += 1
+            return KabuOrderResult(
+                order_id="api-order-1",
+                symbol=order_request.symbol,
+                status=OrderStatus.REQUESTED,
+                filled_quantity=0,
+                remaining_quantity=order_request.quantity,
+                avg_price=None,
+            )
+
+    api_client = FakeApiClient()
+    gateway = LiveOrderGateway(
+        api_client=api_client,  # type: ignore[arg-type]
+        token="token-1",
+        allowed_symbols=("7203",),
+        safety_validator=_validator(
+            state_provider=lambda symbol: OrderSafetyState(
+                position=Position(symbol=symbol, quantity=0),
+            )
+        ),
+    )
+
+    gateway.place_order(order=_market_sell_order(), timestamp=_timestamp())
+
+    assert api_client.call_count == 1
+
+
+def test_live_order_gateway_rejects_exit_when_position_is_zero() -> None:
+    class FakeApiClient:
+        def send_order(self, token: str, order_request: KabuOrderRequest) -> KabuOrderResult:
+            raise AssertionError("send_order should not be called")
+
+    gateway = LiveOrderGateway(
+        api_client=FakeApiClient(),  # type: ignore[arg-type]
+        token="token-1",
+        allowed_symbols=("7203",),
+        safety_validator=_validator(
+            state_provider=lambda symbol: OrderSafetyState(
+                position=Position(symbol=symbol, quantity=0),
+            )
+        ),
+    )
+
+    with pytest.raises(OrderSafetyError):
+        gateway.place_order(
+            order=_market_sell_order(is_exit=True),
+            timestamp=_timestamp(),
+        )
+
+
 def test_live_order_gateway_rejects_non_exit_sell_with_long_position() -> None:
     class FakeApiClient:
         def send_order(self, token: str, order_request: KabuOrderRequest) -> KabuOrderResult:

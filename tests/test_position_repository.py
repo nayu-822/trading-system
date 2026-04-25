@@ -104,7 +104,40 @@ def test_position_repository_refreshes_cache_after_ttl() -> None:
 def test_position_repository_ignores_symbol_mismatch() -> None:
     class FakeApiClient:
         def get_positions(self, token: str, symbol: str | None = None) -> tuple[Position, ...]:
+            return (
+                Position(symbol="6758", quantity=100, average_price=1000.0),
+            )
+
+    repository = PositionRepository(
+        api_client=FakeApiClient(),  # type: ignore[arg-type]
+        token="token-1",
+    )
+
+    with pytest.raises(PositionRepositoryError):
+        repository.get_position("7203")
+
+
+def test_position_repository_returns_zero_position_when_symbol_has_no_position() -> None:
+    class FakeApiClient:
+        def get_positions(self, token: str, symbol: str | None = None) -> tuple[Position, ...]:
             return ()
+
+    repository = PositionRepository(
+        api_client=FakeApiClient(),  # type: ignore[arg-type]
+        token="token-1",
+    )
+
+    position = repository.get_position("7203")
+
+    assert position.symbol == "7203"
+    assert position.quantity == 0
+    assert position.average_price == 0.0
+
+
+def test_position_repository_raises_when_position_parse_fails() -> None:
+    class FakeApiClient:
+        def get_positions(self, token: str, symbol: str | None = None) -> tuple[Position, ...]:
+            raise ValueError("parse failed")
 
     repository = PositionRepository(
         api_client=FakeApiClient(),  # type: ignore[arg-type]

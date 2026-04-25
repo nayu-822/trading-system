@@ -33,7 +33,7 @@ class PositionRepository:
             symbol: 取得対象の銘柄コード。
 
         Returns:
-            Position: API応答から変換した建玉。
+            Position: API応答から変換した建玉。対象銘柄の建玉がない場合は数量0の建玉。
 
         Raises:
             PositionRepositoryError: 建玉取得に失敗した場合。
@@ -52,7 +52,10 @@ class PositionRepository:
             ) from error
 
         if not positions:
-            raise PositionRepositoryError(f"position response is empty: {symbol}")
+            position = Position(symbol=symbol, quantity=0, average_price=0.0)
+            self._cache[symbol] = (self.time_provider() + self.cache_ttl_sec, position)
+            self._log_position(position, source="api")
+            return position
 
         position = _merge_positions(symbol, positions)
         if position.symbol != symbol:
@@ -84,6 +87,23 @@ class PositionRepository:
 
 
 def _merge_positions(symbol: str, positions: tuple[Position, ...]) -> Position:
+    """複数建玉を1銘柄の建玉へ集約する。
+
+    Args:
+        symbol: 集約対象の銘柄コード。
+        positions: APIから取得した同一銘柄の建玉一覧。
+
+    Returns:
+        Position: 集約後の建玉。
+
+    Raises:
+        PositionRepositoryError: 建玉データに不整合がある場合。
+    """
+
+    for position in positions:
+        if position.symbol != symbol:
+            raise PositionRepositoryError(f"position symbol mismatch: {symbol}")
+
     total_quantity = sum(position.quantity for position in positions)
     if total_quantity == 0:
         raise PositionRepositoryError(f"position response is empty: {symbol}")
