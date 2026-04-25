@@ -60,6 +60,23 @@ class OrderSnapshot:
     remaining_quantity: int
     avg_price: float | None
     is_exit: bool = False
+    reflected_filled_quantity: int = 0
+
+
+@dataclass(frozen=True)
+class TradeHistorySnapshot:
+    """スナップショットに保存する取引履歴。"""
+
+    order_id: str
+    symbol: str
+    side: OrderSide
+    is_exit: bool
+    filled_quantity: int
+    fill_price: float
+    average_fill_price: float
+    filled_at: datetime
+    status: OrderStatus
+    source: str
 
 
 @dataclass(frozen=True)
@@ -79,6 +96,7 @@ class TradingSymbolStateSnapshot:
     lot_size: int
     position: PositionStateSnapshot
     orders: tuple[OrderSnapshot, ...]
+    trade_histories: tuple[TradeHistorySnapshot, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -140,10 +158,13 @@ def _serialize_value(value: Any) -> Any:
 def _symbol_snapshot_from_dict(data: Mapping[str, Any]) -> TradingSymbolStateSnapshot:
     position_data = data["position"]
     orders_data = data["orders"]
+    trade_histories_data = data.get("trade_histories", [])
     if not isinstance(position_data, Mapping):
         raise TypeError("position must be object")
     if not isinstance(orders_data, list):
         raise TypeError("orders must be list")
+    if not isinstance(trade_histories_data, list):
+        raise TypeError("trade_histories must be list")
     return TradingSymbolStateSnapshot(
         symbol=str(data["symbol"]),
         lot_size=int(data["lot_size"]),
@@ -153,6 +174,9 @@ def _symbol_snapshot_from_dict(data: Mapping[str, Any]) -> TradingSymbolStateSna
             average_price=float(position_data["average_price"]),
         ),
         orders=tuple(_order_snapshot_from_dict(item) for item in orders_data),
+        trade_histories=tuple(
+            _trade_history_snapshot_from_dict(item) for item in trade_histories_data
+        ),
     )
 
 
@@ -176,6 +200,22 @@ def _order_snapshot_from_dict(data: Mapping[str, Any]) -> OrderSnapshot:
         avg_price=(
             float(data["avg_price"]) if data.get("avg_price") is not None else None
         ),
+        reflected_filled_quantity=int(data.get("reflected_filled_quantity", 0)),
+    )
+
+
+def _trade_history_snapshot_from_dict(data: Mapping[str, Any]) -> TradeHistorySnapshot:
+    return TradeHistorySnapshot(
+        order_id=str(data["order_id"]),
+        symbol=str(data["symbol"]),
+        side=OrderSide(str(data["side"])),
+        is_exit=bool(data["is_exit"]),
+        filled_quantity=int(data["filled_quantity"]),
+        fill_price=float(data["fill_price"]),
+        average_fill_price=float(data["average_fill_price"]),
+        filled_at=datetime.fromisoformat(str(data["filled_at"])),
+        status=OrderStatus(str(data["status"])),
+        source=str(data["source"]),
     )
 
 

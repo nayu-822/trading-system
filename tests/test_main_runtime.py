@@ -211,6 +211,8 @@ def test_runtime_resyncs_order_status_after_restore(monkeypatch) -> None:
     assert fake_external.sync_count == 1
     assert restored_state.position is not None
     assert restored_state.position.quantity == 100
+    assert len(restored_state.trade_histories) == 1
+    assert restored_state.trade_histories[0].filled_quantity == 100
     assert len(restored_state.orders) == 0
 
 
@@ -258,6 +260,53 @@ def test_runtime_restores_open_orders_from_api_on_startup(monkeypatch) -> None:
     assert len(state.orders) == 1
     assert state.orders[0].order_id == "api-order-open-1"
     assert state.orders[0].status == OrderStatus.REQUESTED
+
+
+def test_runtime_reflects_filled_order_from_api_on_startup(monkeypatch) -> None:
+    snapshot_dir = _test_dir("restore_filled_order")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+        snapshot_enabled=True,
+        recovery_enabled=True,
+    )
+    fake_external = _FakeExternalDataProcess(
+        events=(),
+        sync_events=(
+            EventFactory(source=EventSource.EXTERNAL_DATA).create(
+                event_type=EventType.ORDER_STATUS_UPDATED,
+                timestamp=_timestamp(),
+                symbol="7203",
+                payload=OrderStatusPayload(
+                    order_id="api-order-filled-1",
+                    status=OrderStatus.FILLED,
+                    filled_quantity=100,
+                    remaining_quantity=0,
+                    avg_price=1000.0,
+                    side=OrderSide.BUY,
+                    order_quantity=100,
+                    external_order_id="api-order-filled-1",
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(fake_external),
+    )
+
+    runtime = app_main.build_application_runtime(config=config)
+    runtime.start()
+    runtime.flush()
+    runtime.stop()
+    state = runtime.trading_process.get_state("7203")
+
+    assert state.position is not None
+    assert state.position.quantity == 100
+    assert len(state.trade_histories) == 1
+    assert state.trade_histories[0].order_id == "api-order-filled-1"
+    assert len(state.orders) == 0
 
 
 def test_runtime_start_stop_start_does_not_duplicate_subscriptions(

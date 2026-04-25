@@ -29,6 +29,7 @@ from domain.models import (
     IndicatorValue,
     KabuOrderRequest,
     KabuOrderResult,
+    Order,
     Position,
     SignalStrategyConfig,
     TradingSymbolConfig,
@@ -339,6 +340,9 @@ def test_trading_process_updates_position_from_order_status() -> None:
     assert order.status == OrderStatus.FILLED
     assert state.position.quantity == 100
     assert state.position.average_price == 1000.0
+    assert order.reflected_filled_quantity == 100
+    assert len(state.trade_histories) == 1
+    assert state.trade_histories[0].filled_quantity == 100
     assert len(state.orders) == 0
 
 
@@ -476,6 +480,8 @@ def test_trading_process_updates_order_from_rest_status() -> None:
     assert state.position is not None
     assert state.position.quantity == 100
     assert state.position.average_price == 1000.0
+    assert order.reflected_filled_quantity == 100
+    assert len(state.trade_histories) == 1
     assert len(state.orders) == 0
 
 
@@ -533,8 +539,52 @@ def test_trading_process_keeps_partial_fill_in_open_orders() -> None:
     assert len(state.orders) == 1
     assert order.status == OrderStatus.PARTIALLY_FILLED
     assert order.filled_quantity == 50
+    assert order.reflected_filled_quantity == 50
     assert state.position is not None
     assert state.position.quantity == 50
+    assert len(state.trade_histories) == 1
+    assert state.trade_histories[0].filled_quantity == 50
+
+
+def test_trading_process_reflects_partial_fill_delta_only() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    event_bus.publish(
+        _create_order_status_event(
+            order_id=order.order_id,
+            status=OrderStatus.PARTIALLY_FILLED,
+            filled_quantity=40,
+            remaining_quantity=60,
+            avg_price=1000.0,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+    event_bus.publish(
+        _create_order_status_event(
+            order_id=order.order_id,
+            status=OrderStatus.PARTIALLY_FILLED,
+            filled_quantity=70,
+            remaining_quantity=30,
+            avg_price=1000.0,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert state.position is not None
+    assert state.position.quantity == 70
+    assert order.reflected_filled_quantity == 70
+    assert len(state.trade_histories) == 2
+    assert state.trade_histories[0].filled_quantity == 40
+    assert state.trade_histories[1].filled_quantity == 30
 
 
 def test_trading_process_removes_canceled_order_from_open_orders() -> None:
@@ -561,6 +611,36 @@ def test_trading_process_removes_canceled_order_from_open_orders() -> None:
     )
 
     assert order.status == OrderStatus.CANCELED
+    assert len(state.orders) == 0
+
+
+def test_trading_process_reflects_partial_fill_before_canceled() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    event_bus.publish(
+        _create_order_status_event(
+            order_id=order.order_id,
+            status=OrderStatus.CANCELED,
+            filled_quantity=40,
+            remaining_quantity=60,
+            avg_price=1000.0,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert state.position is not None
+    assert state.position.quantity == 40
+    assert len(state.trade_histories) == 1
+    assert state.trade_histories[0].filled_quantity == 40
     assert len(state.orders) == 0
 
 
@@ -591,6 +671,36 @@ def test_trading_process_removes_expired_order_from_open_orders() -> None:
     assert len(state.orders) == 0
 
 
+def test_trading_process_reflects_partial_fill_before_expired() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    event_bus.publish(
+        _create_order_status_event(
+            order_id=order.order_id,
+            status=OrderStatus.EXPIRED,
+            filled_quantity=40,
+            remaining_quantity=60,
+            avg_price=1000.0,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert state.position is not None
+    assert state.position.quantity == 40
+    assert len(state.trade_histories) == 1
+    assert state.trade_histories[0].filled_quantity == 40
+    assert len(state.orders) == 0
+
+
 def test_trading_process_calls_order_status_syncer_after_order() -> None:
     sync_calls: list[str] = []
     event_bus = EventBus()
@@ -601,6 +711,34 @@ def test_trading_process_calls_order_status_syncer_after_order() -> None:
     event_bus.publish(_create_signal_event(SignalType.BUY))
 
     assert sync_calls == ["sync"]
+
+
+def test_trading_process_does_not_double_reflect_same_filled_quantity() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    partial_event = _create_order_status_event(
+        order_id=order.order_id,
+        status=OrderStatus.PARTIALLY_FILLED,
+        filled_quantity=40,
+        remaining_quantity=60,
+        avg_price=1000.0,
+        source=EventSource.EXTERNAL_DATA,
+    )
+    event_bus.publish(partial_event)
+    event_bus.publish(partial_event)
+
+    assert state.position is not None
+    assert state.position.quantity == 40
+    assert len(state.trade_histories) == 1
 
 
 def test_trading_process_does_not_additional_order_when_order_status_sync_fails() -> None:
@@ -644,6 +782,192 @@ def test_trading_process_does_not_additional_order_when_order_status_sync_fails(
     assert len(received_orders) == 1
     assert len(state.orders) == 1
     assert state.orders[0].status == OrderStatus.REQUESTED
+
+
+def test_trading_process_ignores_when_filled_quantity_decreases() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    event_bus.publish(
+        _create_order_status_event(
+            order_id=order.order_id,
+            status=OrderStatus.PARTIALLY_FILLED,
+            filled_quantity=70,
+            remaining_quantity=30,
+            avg_price=1000.0,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+    event_bus.publish(
+        _create_order_status_event(
+            order_id=order.order_id,
+            status=OrderStatus.PARTIALLY_FILLED,
+            filled_quantity=40,
+            remaining_quantity=60,
+            avg_price=1000.0,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert state.position is not None
+    assert state.position.quantity == 70
+    assert len(state.trade_histories) == 1
+    assert order.reflected_filled_quantity == 70
+
+
+def test_trading_process_ignores_when_filled_quantity_exceeds_order_quantity() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    event_bus.publish(
+        _create_order_status_event(
+            order_id=order.order_id,
+            status=OrderStatus.FILLED,
+            filled_quantity=120,
+            remaining_quantity=0,
+            avg_price=1000.0,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert state.position is not None
+    assert state.position.quantity == 0
+    assert len(state.trade_histories) == 0
+    assert order.reflected_filled_quantity == 0
+
+
+def test_trading_process_updates_average_price_when_new_buy_is_added() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+    state = trading_process.get_state("7203")
+    assert state.position is not None
+    state.position.quantity = 100
+    state.position.average_price = 1000.0
+    order = Order(
+        order_id="order-2",
+        symbol="7203",
+        side=OrderSide.BUY,
+        quantity=100,
+        order_type="MARKET",
+        status=OrderStatus.REQUESTED,
+        remaining_quantity=100,
+    )
+    state.orders.append(order)
+
+    trading_process.start()
+    event_bus.publish(
+        _create_order_status_event(
+            order_id="order-2",
+            status=OrderStatus.FILLED,
+            filled_quantity=100,
+            remaining_quantity=0,
+            avg_price=1100.0,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert state.position.quantity == 200
+    assert state.position.average_price == 1050.0
+    assert len(state.trade_histories) == 1
+
+
+def test_trading_process_reduces_position_when_exit_sell_fills() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+    state = trading_process.get_state("7203")
+    assert state.position is not None
+    state.position.quantity = 100
+    state.position.average_price = 1000.0
+    order = Order(
+        order_id="exit-order-1",
+        symbol="7203",
+        side=OrderSide.SELL,
+        quantity=100,
+        order_type="MARKET",
+        is_exit=True,
+        status=OrderStatus.REQUESTED,
+        remaining_quantity=100,
+    )
+    state.orders.append(order)
+
+    trading_process.start()
+    event_bus.publish(
+        _create_order_status_event(
+            order_id="exit-order-1",
+            status=OrderStatus.FILLED,
+            filled_quantity=100,
+            remaining_quantity=0,
+            avg_price=1010.0,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert state.position.quantity == 0
+    assert state.position.average_price == 0.0
+    assert len(state.trade_histories) == 1
+    assert state.trade_histories[0].is_exit is True
+
+
+def test_trading_process_ignores_exit_fill_without_position() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+    state = trading_process.get_state("7203")
+    order = Order(
+        order_id="exit-order-1",
+        symbol="7203",
+        side=OrderSide.SELL,
+        quantity=100,
+        order_type="MARKET",
+        is_exit=True,
+        status=OrderStatus.REQUESTED,
+        remaining_quantity=100,
+    )
+    state.orders.append(order)
+
+    trading_process.start()
+    event_bus.publish(
+        _create_order_status_event(
+            order_id="exit-order-1",
+            status=OrderStatus.FILLED,
+            filled_quantity=100,
+            remaining_quantity=0,
+            avg_price=1010.0,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert state.position is not None
+    assert state.position.quantity == 0
+    assert len(state.trade_histories) == 0
+    assert len(state.orders) == 1
 
 
 def test_trading_process_does_not_rollback_terminal_order_status() -> None:

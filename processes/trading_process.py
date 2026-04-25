@@ -21,6 +21,7 @@ from domain.models import (
     RiskConfig,
     RiskControlState,
     RiskSymbolConfig,
+    TradeHistory,
     TradeResult,
     TradingSymbolConfig,
     TradingSymbolState,
@@ -29,11 +30,13 @@ from domain.snapshots import (
     OrderSnapshot,
     PositionStateSnapshot,
     RiskControlSnapshot,
+    TradeHistorySnapshot,
     TradingStateSnapshot,
     TradingSymbolStateSnapshot,
 )
 from infrastructure.event_bus import EventBus
 from trading.mock_order_gateway import MockOrderGateway
+from trading.order_fill_reconciler import OrderFillReconcileError, OrderFillReconciler
 from trading.order_gateway import OrderGateway
 from trading.risk_manager import RiskManager
 
@@ -75,6 +78,9 @@ class TradingProcess:
     states: list[TradingSymbolState] = field(default_factory=list)
     latest_prices: list[tuple[str, float]] = field(default_factory=list)
     order_status_syncer: Callable[[], int] | None = None
+    order_fill_reconciler: OrderFillReconciler = field(
+        default_factory=OrderFillReconciler
+    )
     _subscribed: bool = False
 
     def __post_init__(self) -> None:
@@ -182,6 +188,7 @@ class TradingProcess:
             order_type=self.order_type,
             is_exit=event.payload.signal_type == SignalType.EXIT,
             status=OrderStatus.REQUESTED,
+            price=self._reference_price(event.symbol),
             remaining_quantity=quantity,
         )
         state.orders.append(order)
@@ -242,31 +249,38 @@ class TradingProcess:
             )
             return
 
-        previous_filled_quantity = order.filled_quantity
-        filled_delta = max(event.payload.filled_quantity - previous_filled_quantity, 0)
         if event.payload.external_order_id is not None:
             order.external_order_id = event.payload.external_order_id
         elif (
             order.external_order_id is None and event.payload.order_id != order.order_id
         ):
             order.external_order_id = event.payload.order_id
+        try:
+            reconcile_result = self.order_fill_reconciler.reconcile(
+                order=order,
+                position=self._ensure_position(state),
+                timestamp=event.timestamp,
+                filled_quantity=event.payload.filled_quantity,
+                average_fill_price=event.payload.avg_price,
+                status=event.payload.status,
+            )
+        except OrderFillReconcileError:
+            self.logger.exception(
+                "order fill reconcile failed order_id=%s symbol=%s",
+                order.order_id,
+                order.symbol,
+            )
+            if self.risk_manager is not None:
+                self.risk_manager.on_api_error()
+            return
         order.status = event.payload.status
         order.filled_quantity = event.payload.filled_quantity
         order.remaining_quantity = event.payload.remaining_quantity
         order.avg_price = event.payload.avg_price
-        if (
-            event.payload.status in {OrderStatus.PARTIALLY_FILLED, OrderStatus.FILLED}
-            and filled_delta > 0
-        ):
-            position = self._ensure_position(state)
-            self._update_position(
-                position=position,
-                order=order,
-                filled_quantity=filled_delta,
-                avg_price=event.payload.avg_price or 0.0,
-            )
+        if reconcile_result.newly_reflected_quantity > 0:
+            state.trade_histories.extend(reconcile_result.trade_histories)
             self._publish_position_updated(
-                position=position,
+                position=self._ensure_position(state),
                 timestamp=event.timestamp,
             )
             if self.risk_manager is not None:
@@ -274,11 +288,12 @@ class TradingProcess:
                     TradeResult(symbol=order.symbol, realized_pnl=0.0)
                 )
         self.logger.info(
-            "order status updated order_id=%s external_order_id=%s status=%s filled_quantity=%s remaining_quantity=%s",
+            "order status updated order_id=%s external_order_id=%s status=%s filled_quantity=%s reflected_filled_quantity=%s remaining_quantity=%s",
             order.order_id,
             order.external_order_id,
             order.status.value,
             order.filled_quantity,
+            order.reflected_filled_quantity,
             order.remaining_quantity,
         )
         if order.status in TERMINAL_ORDER_STATUSES:
@@ -402,8 +417,24 @@ class TradingProcess:
                         filled_quantity=order.filled_quantity,
                         remaining_quantity=order.remaining_quantity,
                         avg_price=order.avg_price,
+                        reflected_filled_quantity=order.reflected_filled_quantity,
                     )
                     for order in symbol_state.orders
+                ],
+                trade_histories=[
+                    TradeHistory(
+                        order_id=trade_history.order_id,
+                        symbol=trade_history.symbol,
+                        side=trade_history.side,
+                        is_exit=trade_history.is_exit,
+                        filled_quantity=trade_history.filled_quantity,
+                        fill_price=trade_history.fill_price,
+                        average_fill_price=trade_history.average_fill_price,
+                        filled_at=trade_history.filled_at,
+                        status=trade_history.status,
+                        source=trade_history.source,
+                    )
+                    for trade_history in symbol_state.trade_histories
                 ],
             )
             for symbol_state in snapshot.symbols
@@ -456,8 +487,24 @@ class TradingProcess:
                     filled_quantity=order.filled_quantity,
                     remaining_quantity=order.remaining_quantity,
                     avg_price=order.avg_price,
+                    reflected_filled_quantity=order.reflected_filled_quantity,
                 )
                 for order in state.orders
+            ),
+            trade_histories=tuple(
+                TradeHistorySnapshot(
+                    order_id=trade_history.order_id,
+                    symbol=trade_history.symbol,
+                    side=trade_history.side,
+                    is_exit=trade_history.is_exit,
+                    filled_quantity=trade_history.filled_quantity,
+                    fill_price=trade_history.fill_price,
+                    average_fill_price=trade_history.average_fill_price,
+                    filled_at=trade_history.filled_at,
+                    status=trade_history.status,
+                    source=trade_history.source,
+                )
+                for trade_history in state.trade_histories
             ),
         )
 
@@ -609,7 +656,10 @@ class TradingProcess:
 
         if event.symbol is None:
             return None
-        if event.payload.status in TERMINAL_ORDER_STATUSES:
+        if (
+            event.payload.status in TERMINAL_ORDER_STATUSES
+            and event.payload.filled_quantity == 0
+        ):
             return None
         if event.payload.side is None or event.payload.order_quantity < 1:
             self.logger.error(
@@ -627,10 +677,10 @@ class TradingProcess:
             side=event.payload.side,
             quantity=event.payload.order_quantity,
             order_type="MARKET",
-            status=event.payload.status,
-            filled_quantity=event.payload.filled_quantity,
-            remaining_quantity=event.payload.remaining_quantity,
-            avg_price=event.payload.avg_price,
+            status=OrderStatus.REQUESTED,
+            filled_quantity=0,
+            remaining_quantity=event.payload.order_quantity,
+            avg_price=None,
         )
         state.orders.append(order)
         self.logger.info(
@@ -658,7 +708,10 @@ class TradingProcess:
         """
 
         order_quantity = event.payload.order_quantity or order.quantity
-        return event.payload.filled_quantity <= order_quantity
+        return (
+            order.reflected_filled_quantity <= event.payload.filled_quantity
+            and event.payload.filled_quantity <= order_quantity
+        )
 
     def _remove_order(
         self,

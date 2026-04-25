@@ -1,7 +1,14 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
-from domain.enums import EventSource, EventType, OrderSide, SignalType, StrategyType
+from domain.enums import (
+    EventSource,
+    EventType,
+    OrderSide,
+    OrderStatus,
+    SignalType,
+    StrategyType,
+)
 from domain.events import (
     BaseEvent,
     ErrorOccurred,
@@ -13,7 +20,7 @@ from domain.events import (
     PositionPayload,
     SignalPayload,
 )
-from domain.models import Position, TradingSymbolState
+from domain.models import Order, Position, TradeHistory, TradingSymbolState
 from infrastructure.event_bus import EventBus
 from infrastructure.file_storage import FileStorage
 from processes.persistence_process import PersistenceProcess
@@ -257,6 +264,61 @@ def test_trading_process_continues_after_snapshot_restore() -> None:
     assert isinstance(received_orders[0], OrderRequested)
     assert received_orders[0].payload.side == OrderSide.SELL
     assert received_orders[0].payload.quantity == 100
+    _remove_file(snapshot_path)
+
+
+def test_trading_process_restores_reflected_quantity_and_trade_history() -> None:
+    storage = FileStorage()
+    snapshot_path = _test_file_path("trading_snapshot_trade_history.json")
+    _remove_file(snapshot_path)
+    original_process = TradingProcess(event_bus=EventBus())
+    state = original_process.get_state("7203")
+    state.orders.append(
+        Order(
+            order_id="order-1",
+            symbol="7203",
+            side=OrderSide.BUY,
+            quantity=100,
+            order_type="MARKET",
+            status=OrderStatus.PARTIALLY_FILLED,
+            filled_quantity=70,
+            remaining_quantity=30,
+            avg_price=1000.0,
+            reflected_filled_quantity=70,
+        )
+    )
+    state.trade_histories.append(
+        TradeHistory(
+            order_id="order-1",
+            symbol="7203",
+            side=OrderSide.BUY,
+            is_exit=False,
+            filled_quantity=70,
+            fill_price=1000.0,
+            average_fill_price=1000.0,
+            filled_at=_timestamp(),
+            status=OrderStatus.PARTIALLY_FILLED,
+            source="api_order_sync",
+        )
+    )
+    storage.overwrite_json(
+        snapshot_path, original_process.get_snapshot(_timestamp()).to_dict()
+    )
+
+    restored_process = TradingProcess(event_bus=EventBus())
+    snapshot_process = SnapshotProcess(
+        event_bus=EventBus(),
+        trading_process=restored_process,
+        storage=storage,
+        snapshot_path=snapshot_path,
+    )
+
+    assert snapshot_process.restore() is True
+    restored_state = restored_process.get_state("7203")
+
+    assert restored_state.orders[0].reflected_filled_quantity == 70
+    assert len(restored_state.trade_histories) == 1
+    assert restored_state.trade_histories[0].filled_quantity == 70
     _remove_file(snapshot_path)
 
 

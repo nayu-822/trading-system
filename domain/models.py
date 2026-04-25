@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from domain.enums import (
     DataSourceMode,
@@ -92,6 +93,23 @@ class Order:
     filled_quantity: int = 0
     remaining_quantity: int = 0
     avg_price: float | None = None
+    reflected_filled_quantity: int = 0
+
+
+@dataclass(frozen=True)
+class TradeHistory:
+    """約定反映済みの取引履歴。"""
+
+    order_id: str
+    symbol: str
+    side: OrderSide
+    is_exit: bool
+    filled_quantity: int
+    fill_price: float
+    average_fill_price: float
+    filled_at: datetime
+    status: OrderStatus
+    source: str
 
 
 @dataclass
@@ -110,6 +128,7 @@ class TradingSymbolState:
     symbol: str
     lot_size: int
     orders: list[Order] = field(default_factory=list)
+    trade_histories: list[TradeHistory] = field(default_factory=list)
     position: Position | None = None
 
 
