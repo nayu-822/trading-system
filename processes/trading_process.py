@@ -484,6 +484,10 @@ class TradingProcess:
                     api_error_count=snapshot.risk_state.api_error_count,
                     business_date=snapshot.risk_state.business_date,
                     trading_halt_reason=snapshot.risk_state.trading_halt_reason,
+                    trading_halt_message=snapshot.risk_state.trading_halt_message,
+                    trading_halt_halted_at=snapshot.risk_state.trading_halt_halted_at,
+                    trading_halt_resolved_at=snapshot.risk_state.trading_halt_resolved_at,
+                    requires_manual_resume=snapshot.risk_state.requires_manual_resume,
                 )
             )
 
@@ -555,6 +559,10 @@ class TradingProcess:
             api_error_count=self.risk_manager.state.api_error_count,
             business_date=self.risk_manager.state.business_date,
             trading_halt_reason=self.risk_manager.state.trading_halt_reason,
+            trading_halt_message=self.risk_manager.state.trading_halt_message,
+            trading_halt_halted_at=self.risk_manager.state.trading_halt_halted_at,
+            trading_halt_resolved_at=self.risk_manager.state.trading_halt_resolved_at,
+            requires_manual_resume=self.risk_manager.state.requires_manual_resume,
         )
 
     def _has_open_order(self, state: TradingSymbolState) -> bool:

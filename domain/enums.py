@@ -36,6 +36,10 @@ class TradingHaltReason(str, Enum):
     DRAWDOWN = "drawdown"
     MAX_DAILY_LOSS = "max_daily_loss"
     POSITION_MISMATCH = "position_mismatch"
+    ORDER_SYNC_FAILED = "order_sync_failed"
+    POSITION_FETCH_FAILED = "position_fetch_failed"
+    ORDER_SAFETY_FAILED = "order_safety_failed"
+    UNKNOWN_ERROR = "unknown_error"
 
 
 class EventType(str, Enum):

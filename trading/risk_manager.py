@@ -12,6 +12,7 @@ from domain.models import (
     TradeResult,
     TradingSymbolState,
 )
+from trading.trading_halt_manager import TradingHaltManager
 
 
 @dataclass
@@ -23,12 +24,20 @@ class RiskManager:
     state: RiskControlState = field(default_factory=RiskControlState)
     today_provider: Callable[[], date] = date.today
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
+    trading_halt_manager: TradingHaltManager | None = None
 
     def __post_init__(self) -> None:
         if self.state.current_equity <= 0:
             self.state.current_equity = self.config.account_equity
         if self.state.max_equity <= 0:
             self.state.max_equity = self.state.current_equity
+        if self.trading_halt_manager is None:
+            self.trading_halt_manager = TradingHaltManager(
+                state=self.state,
+                logger=self.logger,
+            )
+        else:
+            self.trading_halt_manager.state = self.state
         self._ensure_business_date()
 
     def can_enter(
@@ -142,7 +151,10 @@ class RiskManager:
         self.state.api_error_count += 1
         self.logger.warning("api error counted count=%s", self.state.api_error_count)
         if self.state.api_error_count >= self.config.api_error_limit:
-            self.activate_kill_switch(TradingHaltReason.API_ERROR_LIMIT)
+            self.halt_trading(
+                reason=TradingHaltReason.API_ERROR_LIMIT,
+                message="api_error_limit reached",
+            )
 
     def update_equity(self, current_equity: float) -> None:
         """資産状態と最大ドローダウンを更新する。"""
@@ -161,15 +173,41 @@ class RiskManager:
     def activate_kill_switch(self, reason: TradingHaltReason) -> None:
         """強制停止を有効化する。"""
 
+        self.halt_trading(reason=reason, message=reason.value)
+
+    def halt_trading(
+        self,
+        reason: TradingHaltReason,
+        message: str,
+        requires_manual_resume: bool = True,
+    ) -> None:
+        """取引停止状態へ遷移する。"""
+
         if not self.config.kill_switch_enabled:
             self.logger.warning(
                 "kill switch skipped reason=%s disabled=true", reason.value
             )
             return
-        self.state.trading_halt_reason = reason
-        if not self.state.kill_switch_active:
-            self.state.kill_switch_active = True
-            self.logger.error("kill switch activated reason=%s", reason.value)
+        if self.trading_halt_manager is None:
+            self.trading_halt_manager = TradingHaltManager(
+                state=self.state,
+                logger=self.logger,
+            )
+        self.trading_halt_manager.halt(
+            reason=reason,
+            message=message,
+            requires_manual_resume=requires_manual_resume,
+        )
+
+    def resume_trading(self, message: str) -> None:
+        """取引停止状態を解除する。"""
+
+        if self.trading_halt_manager is None:
+            self.trading_halt_manager = TradingHaltManager(
+                state=self.state,
+                logger=self.logger,
+            )
+        self.trading_halt_manager.resume(message=message)
 
     def restore_state(self, state: RiskControlState) -> None:
         """snapshot 由来のリスク状態を復元する。"""

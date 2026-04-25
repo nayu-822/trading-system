@@ -12,12 +12,14 @@ from domain.enums import (
     EventSource,
     EventType,
     KabuApiEnvironment,
+    OrderStatus,
     StrategyType,
     TradingHaltReason,
     TradingMode,
 )
 from domain.events import EventFactory, SystemStartedPayload
 from domain.models import (
+    Order,
     RiskSymbolConfig,
     SignalStrategyConfig,
     SystemConfig,
@@ -99,6 +101,7 @@ class ApplicationRuntime:
         if self.config.app.recovery_enabled:
             self.restored_snapshot = self.snapshot_process.restore()
         self.logger.info("snapshot restore restored=%s", self.restored_snapshot)
+        self._log_halt_state_on_startup()
 
         try:
             self.persistence_process.start()
@@ -193,18 +196,74 @@ class ApplicationRuntime:
                     symbol=symbol,
                     internal_position=state.position,
                 )
-            except PositionReconciliationError:
+            except PositionReconciliationError as error:
                 self.logger.exception(
                     "position reconciliation failed symbol=%s",
                     symbol,
                 )
                 if self.trading_process.risk_manager is not None:
-                    self.trading_process.risk_manager.activate_kill_switch(
-                        TradingHaltReason.POSITION_MISMATCH
+                    self.trading_process.risk_manager.halt_trading(
+                        reason=_resolve_position_reconciliation_reason(error),
+                        message=str(error),
                     )
                 continue
             reconciled_count += 1
         return reconciled_count
+
+    def resume_trading(self) -> bool:
+        """停止状態の再確認と明示解除を行う。
+
+        Returns:
+            bool: 解除に成功した場合は True。
+        """
+
+        risk_manager = self.trading_process.risk_manager
+        if risk_manager is None:
+            self.logger.warning("trading halt action=resume_failed reason=unknown message=risk_manager is empty")
+            return False
+        if not risk_manager.state.kill_switch_active:
+            risk_manager.resume_trading("resume requested while not halted")
+            return True
+        if (
+            self.config.app.data_source_mode != DataSourceMode.API
+            or getattr(self.external_data_process, "rest_poller", None) is None
+        ):
+            self.logger.warning(
+                "trading halt action=resume_failed reason=%s message=%s halted_at=%s resolved_at=%s requires_manual_resume=%s",
+                risk_manager.state.trading_halt_reason.value
+                if risk_manager.state.trading_halt_reason is not None
+                else TradingHaltReason.UNKNOWN_ERROR.value,
+                "api resume checks are unavailable",
+                risk_manager.state.trading_halt_halted_at,
+                risk_manager.state.trading_halt_resolved_at,
+                risk_manager.state.requires_manual_resume,
+            )
+            return False
+        try:
+            self.external_data_process.sync_orders_once(force_refresh=True)
+        except Exception as error:
+            risk_manager.halt_trading(
+                reason=TradingHaltReason.ORDER_SYNC_FAILED,
+                message=f"order sync failed during resume: {error}",
+            )
+            self._log_resume_failed()
+            return False
+        self.reconcile_positions()
+        if not self._open_orders_match_api():
+            risk_manager.halt_trading(
+                reason=TradingHaltReason.ORDER_SYNC_FAILED,
+                message="open orders are not synchronized with api",
+            )
+            self._log_resume_failed()
+            return False
+        enabled_symbols = tuple(
+            symbol.code for symbol in self.config.symbols if symbol.enabled
+        )
+        if self.reconcile_positions(symbols=enabled_symbols) != len(enabled_symbols):
+            self._log_resume_failed()
+            return False
+        risk_manager.resume_trading("manual resume completed")
+        return True
 
     def wait(self, stop_event: Event | None = None) -> None:
         """API モードでは停止要求まで待機し、CSV モードでは即時に戻る。"""
@@ -239,6 +298,82 @@ class ApplicationRuntime:
             payload=SystemStartedPayload(mode=self.config.app.mode.value),
         )
         self.event_bus.publish(started_event)
+
+    def _open_orders_match_api(self) -> bool:
+        """未完了注文が API と内部状態で一致しているか確認する。"""
+
+        rest_poller = getattr(self.external_data_process, "rest_poller", None)
+        if rest_poller is None:
+            return False
+        for symbol in (symbol.code for symbol in self.config.symbols if symbol.enabled):
+            api_orders = {
+                self._order_identity(order)
+                for order in rest_poller.order_status_repository.get_open_orders(
+                    symbol=symbol,
+                    force_refresh=True,
+                )
+            }
+            internal_orders = {
+                self._order_identity(order)
+                for order in self.trading_process.get_state(symbol).orders
+                if order.status
+                in {
+                    OrderStatus.NEW,
+                    OrderStatus.REQUESTED,
+                    OrderStatus.PARTIALLY_FILLED,
+                }
+            }
+            if api_orders != internal_orders:
+                return False
+        return True
+
+    def _order_identity(self, order: Order) -> tuple[str, str, str, int, str, int, int, bool]:
+        """未完了注文比較用の識別子を返す。"""
+
+        return (
+            order.external_order_id or order.order_id,
+            order.symbol,
+            order.side.value,
+            order.quantity,
+            order.status.value,
+            order.filled_quantity,
+            order.remaining_quantity,
+            order.is_exit,
+        )
+
+    def _log_halt_state_on_startup(self) -> None:
+        """起動時に停止状態をログ出力する。"""
+
+        risk_manager = self.trading_process.risk_manager
+        if risk_manager is None or not risk_manager.state.kill_switch_active:
+            return
+        self.logger.warning(
+            "trading halt action=halt reason=%s message=%s halted_at=%s resolved_at=%s requires_manual_resume=%s",
+            risk_manager.state.trading_halt_reason.value
+            if risk_manager.state.trading_halt_reason is not None
+            else "",
+            risk_manager.state.trading_halt_message,
+            risk_manager.state.trading_halt_halted_at,
+            risk_manager.state.trading_halt_resolved_at,
+            risk_manager.state.requires_manual_resume,
+        )
+
+    def _log_resume_failed(self) -> None:
+        """解除失敗ログを出力する。"""
+
+        risk_manager = self.trading_process.risk_manager
+        if risk_manager is None:
+            return
+        self.logger.warning(
+            "trading halt action=resume_failed reason=%s message=%s halted_at=%s resolved_at=%s requires_manual_resume=%s",
+            risk_manager.state.trading_halt_reason.value
+            if risk_manager.state.trading_halt_reason is not None
+            else "",
+            risk_manager.state.trading_halt_message,
+            risk_manager.state.trading_halt_halted_at,
+            risk_manager.state.trading_halt_resolved_at,
+            risk_manager.state.requires_manual_resume,
+        )
 
 
 def initialize_application(
@@ -525,6 +660,16 @@ def _build_position_reconciliation_service(
         average_price_tolerance=config.app.position_average_price_tolerance,
         logger=logger,
     )
+
+
+def _resolve_position_reconciliation_reason(
+    error: PositionReconciliationError,
+) -> TradingHaltReason:
+    """建玉突合エラーから停止理由を決定する。"""
+
+    if "failed to fetch api position" in str(error):
+        return TradingHaltReason.POSITION_FETCH_FAILED
+    return TradingHaltReason.POSITION_MISMATCH
 
 
 def _ensure_live_order_allowed(config: SystemConfig) -> None:

@@ -63,6 +63,18 @@ class TradeResult:
     realized_pnl: float
 
 
+@dataclass(frozen=True)
+class TradingHaltState:
+    """取引停止状態の詳細。"""
+
+    is_halted: bool = False
+    reason: TradingHaltReason | None = None
+    message: str = ""
+    halted_at: datetime | None = None
+    resolved_at: datetime | None = None
+    requires_manual_resume: bool = False
+
+
 @dataclass
 class RiskControlState:
     """RiskManager が保持する安全制御状態。"""
@@ -77,6 +89,10 @@ class RiskControlState:
     api_error_count: int = 0
     business_date: str | None = None
     trading_halt_reason: TradingHaltReason | None = None
+    trading_halt_message: str = ""
+    trading_halt_halted_at: datetime | None = None
+    trading_halt_resolved_at: datetime | None = None
+    requires_manual_resume: bool = False
 
 
 @dataclass

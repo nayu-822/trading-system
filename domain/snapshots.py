@@ -119,6 +119,10 @@ class RiskControlSnapshot:
     api_error_count: int
     business_date: str | None
     trading_halt_reason: TradingHaltReason | None = None
+    trading_halt_message: str = ""
+    trading_halt_halted_at: datetime | None = None
+    trading_halt_resolved_at: datetime | None = None
+    requires_manual_resume: bool = False
 
 
 @dataclass(frozen=True)
@@ -250,4 +254,16 @@ def _risk_snapshot_from_dict(value: Any) -> RiskControlSnapshot | None:
             if value.get("trading_halt_reason") is not None
             else None
         ),
+        trading_halt_message=str(value.get("trading_halt_message", "")),
+        trading_halt_halted_at=(
+            datetime.fromisoformat(str(value["trading_halt_halted_at"]))
+            if value.get("trading_halt_halted_at") is not None
+            else None
+        ),
+        trading_halt_resolved_at=(
+            datetime.fromisoformat(str(value["trading_halt_resolved_at"]))
+            if value.get("trading_halt_resolved_at") is not None
+            else None
+        ),
+        requires_manual_resume=bool(value.get("requires_manual_resume", False)),
     )

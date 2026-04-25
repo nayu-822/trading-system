@@ -8,6 +8,7 @@ from domain.enums import (
     OrderStatus,
     SignalType,
     StrategyType,
+    TradingHaltReason,
 )
 from domain.events import (
     BaseEvent,
@@ -319,6 +320,41 @@ def test_trading_process_restores_reflected_quantity_and_trade_history() -> None
     assert restored_state.orders[0].reflected_filled_quantity == 70
     assert len(restored_state.trade_histories) == 1
     assert restored_state.trade_histories[0].filled_quantity == 70
+    _remove_file(snapshot_path)
+
+
+def test_trading_process_restores_trading_halt_state_from_snapshot() -> None:
+    storage = FileStorage()
+    snapshot_path = _test_file_path("trading_snapshot_halt_state.json")
+    _remove_file(snapshot_path)
+    original_process = TradingProcess(event_bus=EventBus())
+    assert original_process.risk_manager is not None
+    original_process.risk_manager.halt_trading(
+        reason=TradingHaltReason.POSITION_MISMATCH,
+        message="position mismatch detected",
+    )
+    storage.overwrite_json(
+        snapshot_path, original_process.get_snapshot(_timestamp()).to_dict()
+    )
+
+    restored_process = TradingProcess(event_bus=EventBus())
+    snapshot_process = SnapshotProcess(
+        event_bus=EventBus(),
+        trading_process=restored_process,
+        storage=storage,
+        snapshot_path=snapshot_path,
+    )
+
+    assert snapshot_process.restore() is True
+    assert restored_process.risk_manager is not None
+    assert restored_process.risk_manager.state.kill_switch_active is True
+    assert (
+        restored_process.risk_manager.state.trading_halt_reason
+        == TradingHaltReason.POSITION_MISMATCH
+    )
+    assert restored_process.risk_manager.state.trading_halt_message == "position mismatch detected"
+    assert restored_process.risk_manager.state.trading_halt_halted_at is not None
+    assert restored_process.risk_manager.state.requires_manual_resume is True
     _remove_file(snapshot_path)
 
 

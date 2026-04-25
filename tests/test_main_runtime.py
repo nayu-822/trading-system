@@ -12,6 +12,8 @@ from domain.enums import (
     EventType,
     OrderSide,
     OrderStatus,
+    SignalType,
+    TradingHaltReason,
     TradingMode,
 )
 from domain.events import (
@@ -19,8 +21,9 @@ from domain.events import (
     EventFactory,
     MarketDataPayload,
     OrderStatusPayload,
+    SignalPayload,
 )
-from domain.models import Order, SystemConfig
+from domain.models import IndicatorValue, Order, SystemConfig
 from infrastructure.config_loader import load_config
 from infrastructure.event_bus import EventBus
 
@@ -461,6 +464,155 @@ def test_runtime_reconcile_positions_halts_trading_when_positions_mismatch(
     )
 
 
+def test_runtime_persists_and_restores_halt_state(monkeypatch) -> None:
+    snapshot_dir = _test_dir("restore_halt_state")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+        snapshot_enabled=True,
+        recovery_enabled=True,
+    )
+    original_runtime = app_main.build_application_runtime(
+        config=replace(config, app=replace(config.app, recovery_enabled=False))
+    )
+    assert original_runtime.trading_process.risk_manager is not None
+    original_runtime.trading_process.risk_manager.halt_trading(
+        reason=TradingHaltReason.POSITION_MISMATCH,
+        message="position mismatch detected",
+    )
+    original_runtime.snapshot_process.save_snapshot(_timestamp())
+    original_runtime.snapshot_process.start()
+    original_runtime.snapshot_process.flush()
+    original_runtime.snapshot_process.stop()
+    fake_external = _FakeExternalDataProcess(events=())
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(fake_external),
+    )
+
+    restored_runtime = app_main.build_application_runtime(config=config)
+    restored_runtime.start()
+    restored_runtime.event_bus.publish(_market_data_event(price=1000.0))
+    restored_runtime.event_bus.publish(_signal_event(SignalType.BUY))
+    restored_runtime.flush()
+    restored_runtime.stop()
+
+    assert restored_runtime.trading_process.risk_manager is not None
+    assert restored_runtime.trading_process.risk_manager.state.kill_switch_active is True
+    assert (
+        restored_runtime.trading_process.risk_manager.state.trading_halt_reason
+        == TradingHaltReason.POSITION_MISMATCH
+    )
+    assert len(restored_runtime.trading_process.get_state("7203").orders) == 0
+
+
+def test_runtime_resume_trading_succeeds_after_checks(monkeypatch) -> None:
+    snapshot_dir = _test_dir("resume_success")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+    )
+    fake_external = _FakeExternalDataProcess(
+        events=(),
+        rest_poller=_FakeRestPoller(
+            order_status_repository=_FakeOrderStatusRepository(open_orders=())
+        ),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(fake_external),
+    )
+    runtime = app_main.build_application_runtime(config=config)
+    runtime.position_reconciliation_service = _FakePositionReconciliationService()
+    runtime.trading_process.start()
+    assert runtime.trading_process.risk_manager is not None
+    runtime.trading_process.risk_manager.halt_trading(
+        reason=TradingHaltReason.POSITION_MISMATCH,
+        message="manual check required",
+    )
+
+    resumed = runtime.resume_trading()
+    runtime.event_bus.publish(_market_data_event(price=1000.0))
+    runtime.event_bus.publish(_signal_event(SignalType.BUY))
+
+    assert resumed is True
+    assert runtime.trading_process.risk_manager.state.kill_switch_active is False
+    assert runtime.trading_process.get_state("7203").position is not None
+    assert runtime.trading_process.get_state("7203").position.quantity == 100
+
+
+def test_runtime_resume_trading_fails_when_positions_do_not_match(monkeypatch) -> None:
+    snapshot_dir = _test_dir("resume_position_mismatch")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+    )
+    fake_external = _FakeExternalDataProcess(
+        events=(),
+        rest_poller=_FakeRestPoller(
+            order_status_repository=_FakeOrderStatusRepository(open_orders=())
+        ),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(fake_external),
+    )
+    runtime = app_main.build_application_runtime(config=config)
+    runtime.position_reconciliation_service = _FailingPositionReconciliationService()
+    assert runtime.trading_process.risk_manager is not None
+    runtime.trading_process.risk_manager.halt_trading(
+        reason=TradingHaltReason.POSITION_MISMATCH,
+        message="position mismatch detected",
+    )
+
+    resumed = runtime.resume_trading()
+
+    assert resumed is False
+    assert runtime.trading_process.risk_manager.state.kill_switch_active is True
+    assert (
+        runtime.trading_process.risk_manager.state.trading_halt_reason
+        == TradingHaltReason.POSITION_MISMATCH
+    )
+
+
+def test_runtime_resume_trading_fails_when_order_sync_fails(monkeypatch) -> None:
+    snapshot_dir = _test_dir("resume_order_sync_failed")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+    )
+    fake_external = _FakeExternalDataProcess(
+        events=(),
+        raise_on_sync=RuntimeError("sync failed"),
+        rest_poller=_FakeRestPoller(
+            order_status_repository=_FakeOrderStatusRepository(open_orders=())
+        ),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(fake_external),
+    )
+    runtime = app_main.build_application_runtime(config=config)
+    runtime.position_reconciliation_service = _FakePositionReconciliationService()
+    assert runtime.trading_process.risk_manager is not None
+    runtime.trading_process.risk_manager.halt_trading(
+        reason=TradingHaltReason.POSITION_MISMATCH,
+        message="position mismatch detected",
+    )
+
+    resumed = runtime.resume_trading()
+
+    assert resumed is False
+    assert (
+        runtime.trading_process.risk_manager.state.trading_halt_reason
+        == TradingHaltReason.ORDER_SYNC_FAILED
+    )
+
+
 def test_runtime_reconcile_positions_skips_when_disabled(monkeypatch) -> None:
     snapshot_dir = _test_dir("position_reconcile_disabled")
     config = _runtime_config(
@@ -519,9 +671,13 @@ class _FakeExternalDataProcess:
         self,
         events: tuple[BaseEvent[Any], ...],
         sync_events: tuple[BaseEvent[Any], ...] = (),
+        raise_on_sync: Exception | None = None,
+        rest_poller=None,
     ) -> None:
         self.events = events
         self.sync_events = sync_events
+        self.raise_on_sync = raise_on_sync
+        self.rest_poller = rest_poller
         self.event_bus: EventBus | None = None
         self.run_count = 0
         self.sync_count = 0
@@ -542,6 +698,8 @@ class _FakeExternalDataProcess:
     def sync_orders_once(self, force_refresh: bool = False) -> int:
         if self.event_bus is None:
             raise AssertionError("event_bus is not configured")
+        if self.raise_on_sync is not None:
+            raise self.raise_on_sync
         self.sync_count += 1
         for event in self.sync_events:
             self.event_bus.publish(event)
@@ -607,6 +765,26 @@ class _FailingPositionReconciliationService:
         raise app_main.PositionReconciliationError(f"mismatch: {symbol}")
 
 
+class _FakeOrderStatusRepository:
+    def __init__(self, open_orders: tuple[Order, ...]) -> None:
+        self.open_orders = open_orders
+
+    def get_open_orders(
+        self,
+        symbol: str | None = None,
+        force_refresh: bool = False,
+    ) -> list[Order]:
+        if symbol is None:
+            return list(self.open_orders)
+        return [order for order in self.open_orders if order.symbol == symbol]
+
+
+class _FakeRestPoller:
+    def __init__(self, order_status_repository: _FakeOrderStatusRepository) -> None:
+        self.order_status_repository = order_status_repository
+        self.on_cycle_completed = None
+
+
 def _runtime_config(
     data_source_mode: DataSourceMode,
     snapshot_dir: Path,
@@ -654,6 +832,19 @@ def _order_status_event(order_id: str) -> BaseEvent[Any]:
             remaining_quantity=0,
             avg_price=1000.0,
             is_exit=False,
+        ),
+    )
+
+
+def _signal_event(signal_type: SignalType) -> BaseEvent[Any]:
+    return EventFactory(source=EventSource.SIGNAL).create(
+        event_type=EventType.SIGNAL_DETECTED,
+        timestamp=_timestamp(),
+        symbol="7203",
+        payload=SignalPayload(
+            signal_type=signal_type,
+            strategy_type=app_main.StrategyType.TREND,
+            indicators=(IndicatorValue(name="current_price", value=1000.0),),
         ),
     )
 
