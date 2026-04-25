@@ -55,7 +55,10 @@ class PositionReconciliationService:
             internal_position=internal_position,
         )
         try:
-            api_position = self.position_repository.get_position(symbol)
+            api_position = self.position_repository.get_position(
+                symbol,
+                force_refresh=True,
+            )
         except PositionRepositoryError as error:
             self._log_result(
                 symbol=symbol,

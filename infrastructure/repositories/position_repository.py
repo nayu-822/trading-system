@@ -26,11 +26,12 @@ class PositionRepository:
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
     _cache: dict[str, tuple[float, Position]] = field(default_factory=dict)
 
-    def get_position(self, symbol: str) -> Position:
+    def get_position(self, symbol: str, force_refresh: bool = False) -> Position:
         """指定銘柄の建玉を取得する。
 
         Args:
             symbol: 取得対象の銘柄コード。
+            force_refresh: True の場合はキャッシュを使わず API から再取得する。
 
         Returns:
             Position: API応答から変換した建玉。対象銘柄の建玉がない場合は数量0の建玉。
@@ -39,7 +40,7 @@ class PositionRepository:
             PositionRepositoryError: 建玉取得に失敗した場合。
         """
 
-        cached = self._get_cached_position(symbol)
+        cached = None if force_refresh else self._get_cached_position(symbol)
         if cached is not None:
             self._log_position(cached, source="cache")
             return cached

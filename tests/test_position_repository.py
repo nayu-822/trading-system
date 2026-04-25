@@ -65,11 +65,74 @@ def test_position_repository_uses_cache_within_ttl() -> None:
         time_provider=time_provider,
     )
 
-    first = repository.get_position("7203")
-    second = repository.get_position("7203")
+    first = repository.get_position("7203", force_refresh=False)
+    second = repository.get_position("7203", force_refresh=False)
 
     assert api_client.call_count == 1
     assert first == second
+
+
+def test_position_repository_force_refresh_bypasses_cache() -> None:
+    class FakeApiClient:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def get_positions(self, token: str, symbol: str | None = None) -> tuple[Position, ...]:
+            self.call_count += 1
+            quantity = 100 if self.call_count == 1 else 200
+            return (Position(symbol="7203", quantity=quantity, average_price=1000.0),)
+
+    current_time = 100.0
+
+    def time_provider() -> float:
+        return current_time
+
+    api_client = FakeApiClient()
+    repository = PositionRepository(
+        api_client=api_client,  # type: ignore[arg-type]
+        token="token-1",
+        cache_ttl_sec=1.0,
+        time_provider=time_provider,
+    )
+
+    cached = repository.get_position("7203", force_refresh=False)
+    refreshed = repository.get_position("7203", force_refresh=True)
+
+    assert api_client.call_count == 2
+    assert cached.quantity == 100
+    assert refreshed.quantity == 200
+
+
+def test_position_repository_updates_cache_after_force_refresh() -> None:
+    class FakeApiClient:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def get_positions(self, token: str, symbol: str | None = None) -> tuple[Position, ...]:
+            self.call_count += 1
+            quantity = 100 if self.call_count == 1 else 200
+            return (Position(symbol="7203", quantity=quantity, average_price=1000.0),)
+
+    current_time = 100.0
+
+    def time_provider() -> float:
+        return current_time
+
+    api_client = FakeApiClient()
+    repository = PositionRepository(
+        api_client=api_client,  # type: ignore[arg-type]
+        token="token-1",
+        cache_ttl_sec=1.0,
+        time_provider=time_provider,
+    )
+
+    repository.get_position("7203")
+    refreshed = repository.get_position("7203", force_refresh=True)
+    cached_after_refresh = repository.get_position("7203")
+
+    assert api_client.call_count == 2
+    assert refreshed.quantity == 200
+    assert cached_after_refresh.quantity == 200
 
 
 def test_position_repository_refreshes_cache_after_ttl() -> None:
