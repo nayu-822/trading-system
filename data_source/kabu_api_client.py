@@ -386,7 +386,11 @@ def _to_order_status(value: Any) -> OrderStatus:
         "7": OrderStatus.EXPIRED,
         "8": OrderStatus.FAILED,
     }
-    key = str(value or "NEW").upper()
+    if value is None:
+        raise KabuApiError("order status is missing")
+    key = str(value).strip().upper()
+    if not key:
+        raise KabuApiError("order status is empty")
     if key not in status_map:
         raise KabuApiError(f"unsupported order status={value}")
     return status_map[key]

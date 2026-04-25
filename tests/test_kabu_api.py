@@ -172,6 +172,71 @@ def test_kabu_api_client_raises_when_order_status_is_unknown() -> None:
         client.get_orders(token="token-1")
 
 
+@pytest.mark.parametrize(
+    "status_value",
+    [None, ""],
+)
+def test_kabu_api_client_raises_when_order_status_is_missing_or_empty(
+    status_value: str | None,
+) -> None:
+    def fake_request(
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: bytes | None,
+        timeout_sec: int,
+    ) -> bytes:
+        return json.dumps(
+            {
+                "Orders": [
+                    {
+                        "ID": "order-1",
+                        "Symbol": "7203",
+                        "Side": "BUY",
+                        "Status": status_value,
+                        "Qty": 100,
+                        "CumQty": 0,
+                        "LeavesQty": 100,
+                    }
+                ]
+            }
+        ).encode("utf-8")
+
+    client = KabuApiClient(config=_api_config(), http_request=fake_request)
+
+    with pytest.raises(KabuApiError):
+        client.get_orders(token="token-1")
+
+
+def test_kabu_api_client_raises_when_order_status_key_is_missing() -> None:
+    def fake_request(
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: bytes | None,
+        timeout_sec: int,
+    ) -> bytes:
+        return json.dumps(
+            {
+                "Orders": [
+                    {
+                        "ID": "order-1",
+                        "Symbol": "7203",
+                        "Side": "BUY",
+                        "Qty": 100,
+                        "CumQty": 0,
+                        "LeavesQty": 100,
+                    }
+                ]
+            }
+        ).encode("utf-8")
+
+    client = KabuApiClient(config=_api_config(), http_request=fake_request)
+
+    with pytest.raises(KabuApiError):
+        client.get_orders(token="token-1")
+
+
 def test_kabu_api_client_sends_order_and_returns_result() -> None:
     calls: list[tuple[str, str, Mapping[str, str], dict[str, Any]]] = []
 

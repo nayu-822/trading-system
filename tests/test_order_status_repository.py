@@ -76,6 +76,29 @@ def test_order_status_repository_raises_when_order_status_is_unknown() -> None:
         repository.get_open_orders(symbol="7203")
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "order status is missing",
+        "order status is empty",
+    ],
+)
+def test_order_status_repository_raises_when_order_status_is_missing_or_empty(
+    message: str,
+) -> None:
+    class FakeApiClient:
+        def get_orders(self, token: str):
+            raise KabuApiError(message)
+
+    repository = OrderStatusRepository(
+        api_client=FakeApiClient(),  # type: ignore[arg-type]
+        token="token-1",
+    )
+
+    with pytest.raises(OrderStatusRepositoryError):
+        repository.get_open_orders(symbol="7203")
+
+
 def test_order_status_repository_raises_when_symbol_is_empty() -> None:
     class FakeApiClient:
         def get_orders(self, token: str):
