@@ -53,7 +53,17 @@ class OrderSafetyValidator:
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
 
     def validate_order(self, order: Order) -> None:
-        """注文前チェックを実行し、NGなら例外を送出する。"""
+        """注文前チェックを実行し、NGなら例外を送出する。
+
+        Args:
+            order: 判定対象の注文。
+
+        Returns:
+            なし。
+
+        Raises:
+            OrderSafetyError: 注文前チェックで安全条件を満たさない場合。
+        """
 
         decision = self.evaluate_order(order)
         self._log_decision(order, decision)
@@ -61,7 +71,14 @@ class OrderSafetyValidator:
             raise OrderSafetyError(decision.reason or "order is not allowed")
 
     def evaluate_order(self, order: Order) -> OrderSafetyDecision:
-        """注文前チェックの判定結果を返す。"""
+        """注文前チェックの判定結果を返す。
+
+        Args:
+            order: 判定対象の注文。
+
+        Returns:
+            OrderSafetyDecision: 注文可否と理由を含む判定結果。
+        """
 
         if self.trading_mode != TradingMode.LIVE:
             return OrderSafetyDecision(False, "trading_mode is not live")
@@ -136,6 +153,15 @@ class OrderSafetyValidator:
         target_order: Order,
         open_orders: tuple[Order, ...],
     ) -> bool:
+        """未完了注文が存在するかを判定する。
+
+        Args:
+            target_order: 今回判定対象の注文。
+            open_orders: 現在保持している未完了を含む注文一覧。
+
+        Returns:
+            bool: 判定対象以外の未完了注文が存在する場合は True。
+        """
         for order in open_orders:
             if order.order_id == target_order.order_id:
                 continue
