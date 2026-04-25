@@ -613,6 +613,69 @@ def test_runtime_resume_trading_fails_when_order_sync_fails(monkeypatch) -> None
     )
 
 
+def test_open_orders_match_api_returns_false_when_api_raises(monkeypatch) -> None:
+    snapshot_dir = _test_dir("open_orders_match_api_error")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+    )
+    fake_external = _FakeExternalDataProcess(
+        events=(),
+        rest_poller=_FakeRestPoller(
+            order_status_repository=_FakeOrderStatusRepository(
+                open_orders=(),
+                raise_on_get=RuntimeError("api failed"),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(fake_external),
+    )
+    runtime = app_main.build_application_runtime(config=config)
+
+    assert runtime._open_orders_match_api() is False
+
+
+def test_runtime_resume_trading_fails_when_open_orders_api_raises(monkeypatch) -> None:
+    snapshot_dir = _test_dir("resume_open_orders_api_error")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+    )
+    fake_external = _FakeExternalDataProcess(
+        events=(),
+        rest_poller=_FakeRestPoller(
+            order_status_repository=_FakeOrderStatusRepository(
+                open_orders=(),
+                raise_on_get=RuntimeError("api failed"),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(fake_external),
+    )
+    runtime = app_main.build_application_runtime(config=config)
+    runtime.position_reconciliation_service = _FakePositionReconciliationService()
+    assert runtime.trading_process.risk_manager is not None
+    runtime.trading_process.risk_manager.halt_trading(
+        reason=TradingHaltReason.POSITION_MISMATCH,
+        message="position mismatch detected",
+    )
+
+    resumed = runtime.resume_trading()
+
+    assert resumed is False
+    assert runtime.trading_process.risk_manager.state.kill_switch_active is True
+    assert (
+        runtime.trading_process.risk_manager.state.trading_halt_reason
+        == TradingHaltReason.ORDER_SYNC_FAILED
+    )
+
+
 def test_runtime_reconcile_positions_skips_when_disabled(monkeypatch) -> None:
     snapshot_dir = _test_dir("position_reconcile_disabled")
     config = _runtime_config(
@@ -766,14 +829,21 @@ class _FailingPositionReconciliationService:
 
 
 class _FakeOrderStatusRepository:
-    def __init__(self, open_orders: tuple[Order, ...]) -> None:
+    def __init__(
+        self,
+        open_orders: tuple[Order, ...],
+        raise_on_get: Exception | None = None,
+    ) -> None:
         self.open_orders = open_orders
+        self.raise_on_get = raise_on_get
 
     def get_open_orders(
         self,
         symbol: str | None = None,
         force_refresh: bool = False,
     ) -> list[Order]:
+        if self.raise_on_get is not None:
+            raise self.raise_on_get
         if symbol is None:
             return list(self.open_orders)
         return [order for order in self.open_orders if order.symbol == symbol]

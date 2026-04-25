@@ -306,13 +306,21 @@ class ApplicationRuntime:
         if rest_poller is None:
             return False
         for symbol in (symbol.code for symbol in self.config.symbols if symbol.enabled):
-            api_orders = {
-                self._order_identity(order)
-                for order in rest_poller.order_status_repository.get_open_orders(
-                    symbol=symbol,
-                    force_refresh=True,
+            try:
+                api_orders = {
+                    self._order_identity(order)
+                    for order in rest_poller.order_status_repository.get_open_orders(
+                        symbol=symbol,
+                        force_refresh=True,
+                    )
+                }
+            except Exception as error:
+                self.logger.exception(
+                    "open order reconciliation failed symbol=%s error=%s",
+                    symbol,
+                    error,
                 )
-            }
+                return False
             internal_orders = {
                 self._order_identity(order)
                 for order in self.trading_process.get_state(symbol).orders
