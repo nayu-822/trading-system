@@ -15,7 +15,14 @@ class ConfigValidationError(Exception):
 
 
 def validate_config(config: SystemConfig) -> None:
-    """必須項目と値の整合性を検証する。"""
+    """構成項目と値の妥当性を検証する。
+    Args:
+        config: 検証対象のシステム設定。
+    Returns:
+        なし
+    Raises:
+        ConfigValidationError: 設定値が不正な場合。
+    """
 
     _validate_app_config(config)
     _validate_symbols(config)
@@ -24,10 +31,17 @@ def validate_config(config: SystemConfig) -> None:
 
 
 def _validate_app_config(config: SystemConfig) -> None:
+    """app 設定の妥当性を検証する。
+    Args:
+        config: 検証対象のシステム設定。
+    Returns:
+        なし
+    Raises:
+        ConfigValidationError: app 設定が不正な場合。
+    """
+
     if config.app.log_level not in LOG_LEVELS:
-        raise ConfigValidationError(
-            "log_level は有効な logging レベルで指定してください"
-        )
+        raise ConfigValidationError("log_level は有効な logging レベルで指定してください")
     if config.app.data_source_mode.value not in DATA_SOURCE_MODES:
         raise ConfigValidationError("data_source_mode は csv / api で指定してください")
     if config.app.trading_mode.value not in TRADING_MODES:
@@ -64,11 +78,11 @@ def _validate_app_config(config: SystemConfig) -> None:
     if config.app.kabu_api.timeout_sec < 1:
         raise ConfigValidationError("api_timeout_sec は1以上で指定してください")
     if not config.app.kabu_api.base_url:
-        raise ConfigValidationError("kabu_api_base_url は必須です")
+        raise ConfigValidationError("kabu_api_base_url は空で指定できません")
     if not config.app.kabu_api.push_url:
-        raise ConfigValidationError("kabu_push_url は必須です")
+        raise ConfigValidationError("kabu_push_url は空で指定できません")
     if not config.app.kabu_api.token_env_name:
-        raise ConfigValidationError("token_env_name は必須です")
+        raise ConfigValidationError("token_env_name は空で指定できません")
     if config.app.snapshot_interval_sec <= 0:
         raise ConfigValidationError("snapshot_interval_sec は1以上で指定してください")
     if config.app.snapshot_max_generations <= 0:
@@ -78,10 +92,19 @@ def _validate_app_config(config: SystemConfig) -> None:
     if config.app.snapshot_debounce_sec < 0:
         raise ConfigValidationError("snapshot_debounce_sec は0以上で指定してください")
     if not config.app.snapshot_dir:
-        raise ConfigValidationError("snapshot_dir は必須です")
+        raise ConfigValidationError("snapshot_dir は空で指定できません")
 
 
 def _validate_symbols(config: SystemConfig) -> None:
+    """symbols 設定の妥当性を検証する。
+    Args:
+        config: 検証対象のシステム設定。
+    Returns:
+        なし
+    Raises:
+        ConfigValidationError: symbols 設定が不正な場合。
+    """
+
     if not config.symbols:
         raise ConfigValidationError("symbols は1件以上指定してください")
 
@@ -101,12 +124,10 @@ def _validate_symbols(config: SystemConfig) -> None:
 
         if symbol.strategy not in _available_strategies():
             raise ConfigValidationError(
-                f"未定義の strategy が指定されています: {symbol.strategy}"
+                f"未対応の strategy が指定されています: {symbol.strategy}"
             )
         if not 0 < symbol.allocation_ratio <= 1:
-            raise ConfigValidationError(
-                "allocation_ratio は0より大きく1以下で指定してください"
-            )
+            raise ConfigValidationError("allocation_ratio は0より大きく1以下で指定してください")
         if symbol.lot_min <= 0:
             raise ConfigValidationError("lot_min は1以上で指定してください")
         if symbol.lot_max < symbol.lot_min:
@@ -137,18 +158,61 @@ def _validate_symbols(config: SystemConfig) -> None:
                 "override lot_multiplier は0より大きく指定してください"
             )
 
+        effective_range_window = overrides.strategy_params.get("range_window")
+        if effective_range_window is not None and int(effective_range_window) <= 0:
+            raise ConfigValidationError("override range_window は1以上で指定してください")
+
+        effective_short_window = int(
+            overrides.strategy_params.get(
+                "trend_short_window",
+                config.strategy.trend.short_window,
+            )
+        )
+        effective_long_window = int(
+            overrides.strategy_params.get(
+                "trend_long_window",
+                config.strategy.trend.long_window,
+            )
+        )
+        if effective_short_window <= 0:
+            raise ConfigValidationError(
+                "override trend_short_window は1以上で指定してください"
+            )
+        if effective_long_window <= 0:
+            raise ConfigValidationError(
+                "override trend_long_window は1以上で指定してください"
+            )
+        if effective_short_window >= effective_long_window:
+            raise ConfigValidationError(
+                "override trend_short_window は trend_long_window より小さく指定してください"
+            )
+
         allocation_total += symbol.allocation_ratio
 
     if enabled_count == 0:
         raise ConfigValidationError("enabled な symbols は1件以上指定してください")
     if allocation_total > 1:
         raise ConfigValidationError("allocation_ratio の合計は1以下で指定してください")
+    for trade_symbol in config.app.trade_symbols:
+        if trade_symbol not in symbol_codes:
+            raise ConfigValidationError(
+                f"trade_symbols に symbols に存在しない銘柄があります: {trade_symbol}"
+            )
 
 
 def _validate_strategy(config: SystemConfig) -> None:
+    """strategy 設定の妥当性を検証する。
+    Args:
+        config: 検証対象のシステム設定。
+    Returns:
+        なし
+    Raises:
+        ConfigValidationError: strategy 設定が不正な場合。
+    """
+
     if config.strategy.default_strategy not in _available_strategies():
         raise ConfigValidationError(
-            f"未定義の default_strategy が指定されています: {config.strategy.default_strategy}"
+            f"未対応の default_strategy が指定されています: {config.strategy.default_strategy}"
         )
     if config.strategy.trend.short_window <= 0:
         raise ConfigValidationError("trend.short_window は1以上で指定してください")
@@ -163,6 +227,15 @@ def _validate_strategy(config: SystemConfig) -> None:
 
 
 def _validate_risk(config: SystemConfig) -> None:
+    """risk 設定の妥当性を検証する。
+    Args:
+        config: 検証対象のシステム設定。
+    Returns:
+        なし
+    Raises:
+        ConfigValidationError: risk 設定が不正な場合。
+    """
+
     if config.risk.max_daily_loss <= 0:
         raise ConfigValidationError("max_daily_loss は0より大きく指定してください")
     if config.risk.max_consecutive_losses <= 0:
@@ -183,9 +256,16 @@ def _validate_risk(config: SystemConfig) -> None:
         raise ConfigValidationError("order_timeout_sec は1以上で指定してください")
     if config.risk.trading_start_time >= config.risk.trading_end_time:
         raise ConfigValidationError(
-            "trading_start_time は trading_end_time より前にしてください"
+            "trading_start_time は trading_end_time より前に指定してください"
         )
 
 
 def _available_strategies() -> set[str]:
+    """利用可能な戦略名一覧を返す。
+    Args:
+        なし
+    Returns:
+        set[str]: 許可する戦略名の集合。
+    """
+
     return STRATEGIES

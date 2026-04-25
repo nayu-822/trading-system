@@ -174,6 +174,73 @@ def test_signal_process_switches_strategy_by_symbol_config() -> None:
     assert received_events[1].payload.signal_type == SignalType.BUY
 
 
+def test_signal_process_applies_symbol_range_window_override() -> None:
+    event_bus = EventBus()
+    signal_process = SignalProcess(
+        event_bus=event_bus,
+        strategy_configs=(
+            SignalStrategyConfig(
+                symbol="1306",
+                strategy_type=StrategyType.RANGE,
+                range_window=30,
+            ),
+        ),
+        range_window=20,
+    )
+
+    signal_process.handle_market_data(_create_market_data_event(price=100.0, symbol="1306"))
+    slot = _find_strategy_slot(signal_process, symbol="1306")
+
+    assert slot.active_strategy_type == StrategyType.RANGE
+    assert slot.strategy.window == 30
+
+
+def test_signal_process_applies_symbol_trend_window_override() -> None:
+    event_bus = EventBus()
+    signal_process = SignalProcess(
+        event_bus=event_bus,
+        strategy_configs=(
+            SignalStrategyConfig(
+                symbol="1570",
+                strategy_type=StrategyType.TREND,
+                trend_short_window=3,
+                trend_long_window=15,
+            ),
+        ),
+        trend_short_window=5,
+        trend_long_window=25,
+    )
+
+    signal_process.handle_market_data(_create_market_data_event(price=100.0, symbol="1570"))
+    slot = _find_strategy_slot(signal_process, symbol="1570")
+
+    assert slot.active_strategy_type == StrategyType.TREND
+    assert slot.strategy.short_window == 3
+    assert slot.strategy.long_window == 15
+
+
+def test_signal_process_uses_global_windows_when_symbol_override_is_missing() -> None:
+    event_bus = EventBus()
+    signal_process = SignalProcess(
+        event_bus=event_bus,
+        strategy_configs=(
+            SignalStrategyConfig(
+                symbol="1321",
+                strategy_type=StrategyType.TREND,
+            ),
+        ),
+        range_window=25,
+        trend_short_window=5,
+        trend_long_window=25,
+    )
+
+    signal_process.handle_market_data(_create_market_data_event(price=100.0, symbol="1321"))
+    slot = _find_strategy_slot(signal_process, symbol="1321")
+
+    assert slot.strategy.short_window == 5
+    assert slot.strategy.long_window == 25
+
+
 def test_signal_process_falls_back_to_trend_when_auto_is_configured(caplog) -> None:
     event_bus = EventBus()
     signal_process = SignalProcess(

@@ -19,6 +19,8 @@ class TrendStrategy:
     """直近価格の上昇・下降でシグナルを生成する最小トレンド戦略。"""
 
     state: TrendStrategyState
+    short_window: int = 5
+    long_window: int = 25
 
     def on_market_data(self, event: MarketDataUpdated) -> SignalPayload | None:
         """前回価格との差分から BUY / SELL を判定する。"""

@@ -612,11 +612,25 @@ def build_application_runtime(
             SignalStrategyConfig(
                 symbol=symbol.code,
                 strategy_type=StrategyType(symbol.strategy),
+                range_window=_resolve_symbol_int_parameter(
+                    symbol=symbol,
+                    parameter_name="range_window",
+                ),
+                trend_short_window=_resolve_symbol_int_parameter(
+                    symbol=symbol,
+                    parameter_name="trend_short_window",
+                ),
+                trend_long_window=_resolve_symbol_int_parameter(
+                    symbol=symbol,
+                    parameter_name="trend_long_window",
+                ),
             )
             for symbol in config.symbols
             if symbol.enabled
         ),
         range_window=config.strategy.range.window,
+        trend_short_window=config.strategy.trend.short_window,
+        trend_long_window=config.strategy.trend.long_window,
     )
     trading_process = TradingProcess(
         event_bus=event_bus,
@@ -755,7 +769,7 @@ def _build_order_gateway(
                 trading_mode=config.app.trading_mode,
                 kabu_api_environment=config.app.kabu_api.environment,
                 max_order_quantity=config.app.max_order_quantity,
-                trade_symbols=config.app.trade_symbols,
+                trade_symbols=_resolve_enabled_trade_symbols(config),
                 enabled_symbols=enabled_symbols,
                 state_provider=_build_order_safety_state_provider(
                     position_repository=position_repository,
@@ -896,6 +910,39 @@ def _build_risk_manager(config: SystemConfig) -> RiskManager:
             for symbol in config.symbols
             if symbol.enabled
         ),
+    )
+
+
+def _resolve_symbol_int_parameter(
+    symbol: Any,
+    parameter_name: str,
+) -> int | None:
+    """銘柄別の戦略上書き値を整数として取得する。
+    Args:
+        symbol: 上書き設定を持つ銘柄設定。
+        parameter_name: 取得するパラメータ名。
+    Returns:
+        int | None: 指定時は整数値、未指定時は None。
+    """
+
+    strategy_params = getattr(symbol.strategy_params_override, "strategy_params", {})
+    value = strategy_params.get(parameter_name)
+    if value is None:
+        return None
+    return int(value)
+
+
+def _resolve_enabled_trade_symbols(config: SystemConfig) -> tuple[str, ...]:
+    """有効化されている取引対象銘柄だけを返す。
+    Args:
+        config: システム設定。
+    Returns:
+        tuple[str, ...]: enabled=true の symbols に存在する取引対象銘柄。
+    """
+
+    enabled_symbols = {symbol.code for symbol in config.symbols if symbol.enabled}
+    return tuple(
+        symbol for symbol in config.app.trade_symbols if symbol in enabled_symbols
     )
 
 

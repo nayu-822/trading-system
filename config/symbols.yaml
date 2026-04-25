@@ -4,10 +4,58 @@ symbols:
     enabled: true
     market: prime
     strategy: auto
-    allocation_ratio: 1.0
+    allocation_ratio: 0.25
     lot_min: 100
     lot_max: 100
     lot_multiplier: 1.0
     strategy_params_override:
       params: {}
     note: phase1 sample
+
+  - code: "1306"
+    name: TOPIX連動型上場投資信託
+    enabled: true
+    market: etf
+    strategy: auto
+    allocation_ratio: 0.25
+    lot_min: 100
+    lot_max: 100
+    lot_multiplier: 1.0
+    strategy_params_override:
+      params:
+        range_window: 30
+        trend_short_window: 10
+        trend_long_window: 50
+    note: per-symbol override sample
+
+  - code: "1321"
+    name: 日経225連動型上場投資信託
+    enabled: true
+    market: etf
+    strategy: auto
+    allocation_ratio: 0.25
+    lot_min: 100
+    lot_max: 100
+    lot_multiplier: 1.0
+    strategy_params_override:
+      params:
+        range_window: 25
+        trend_short_window: 5
+        trend_long_window: 25
+    note: per-symbol override sample
+
+  - code: "1570"
+    name: 日経平均レバレッジ上場投信
+    enabled: true
+    market: etf
+    strategy: auto
+    allocation_ratio: 0.25
+    lot_min: 100
+    lot_max: 100
+    lot_multiplier: 1.0
+    strategy_params_override:
+      params:
+        range_window: 15
+        trend_short_window: 3
+        trend_long_window: 15
+    note: per-symbol override sample

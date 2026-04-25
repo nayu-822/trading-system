@@ -27,6 +27,9 @@ class SignalStrategyConfig:
 
     symbol: str
     strategy_type: StrategyType
+    range_window: int | None = None
+    trend_short_window: int | None = None
+    trend_long_window: int | None = None
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,11 @@ import pytest
 from domain.enums import DataSourceMode, KabuApiEnvironment, RunMode, TradingMode
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
-from main import LiveOrderNotAllowedError, _ensure_live_order_allowed
+from main import (
+    LiveOrderNotAllowedError,
+    _ensure_live_order_allowed,
+    _resolve_enabled_trade_symbols,
+)
 
 
 def test_load_config_returns_structured_model() -> None:
@@ -139,6 +143,29 @@ def test_validate_config_rejects_duplicate_symbol_code() -> None:
         validate_config(invalid_config)
 
 
+def test_validate_config_rejects_trade_symbol_missing_from_symbols() -> None:
+    config = load_config(Path("config"))
+    invalid_config = replace(
+        config,
+        app=replace(config.app, trade_symbols=("9999",)),
+    )
+
+    with pytest.raises(ConfigValidationError):
+        validate_config(invalid_config)
+
+
+def test_resolve_enabled_trade_symbols_excludes_disabled_symbol() -> None:
+    config = load_config(Path("config"))
+    disabled_symbol = replace(config.symbols[1], enabled=False)
+    target_config = replace(
+        config,
+        symbols=[config.symbols[0], disabled_symbol, *config.symbols[2:]],
+        app=replace(config.app, trade_symbols=("1306", "1321")),
+    )
+
+    assert _resolve_enabled_trade_symbols(target_config) == ("1321",)
+
+
 def test_validate_config_rejects_invalid_strategy_window() -> None:
     config = load_config(Path("config"))
     invalid_strategy = replace(
@@ -154,7 +181,12 @@ def test_validate_config_accepts_auto_strategy() -> None:
     config = load_config(Path("config"))
     auto_symbol = replace(config.symbols[0], strategy="auto")
     auto_strategy = replace(config.strategy, default_strategy="auto")
-    valid_config = replace(config, symbols=[auto_symbol], strategy=auto_strategy)
+    valid_config = replace(
+        config,
+        symbols=[auto_symbol],
+        strategy=auto_strategy,
+        app=replace(config.app, trade_symbols=("7203",)),
+    )
 
     validate_config(valid_config)
 

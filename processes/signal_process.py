@@ -28,6 +28,8 @@ class SignalProcess:
     strategy_configs: tuple[SignalStrategyConfig, ...] = ()
     default_strategy_type: StrategyType = StrategyType.AUTO
     range_window: int = 3
+    trend_short_window: int = 5
+    trend_long_window: int = 25
     event_factory: EventFactory = field(
         default_factory=lambda: EventFactory(source=EventSource.SIGNAL)
     )
@@ -105,10 +107,10 @@ class SignalProcess:
         return slot
 
     def _resolve_requested_strategy_type(self, symbol: str) -> StrategyType:
-        for strategy_config in self.strategy_configs:
-            if strategy_config.symbol == symbol:
-                return strategy_config.strategy_type
-        return self.default_strategy_type
+        strategy_config = self._find_strategy_config(symbol)
+        if strategy_config is None:
+            return self.default_strategy_type
+        return strategy_config.strategy_type
 
     def _resolve_active_strategy_type(
         self,
@@ -136,9 +138,41 @@ class SignalProcess:
         symbol: str,
         strategy_type: StrategyType,
     ) -> BaseStrategy:
+        strategy_config = self._find_strategy_config(symbol)
         if strategy_type == StrategyType.RANGE:
             return RangeStrategy(
                 state=RangeStrategyState(symbol=symbol),
-                window=self.range_window,
+                window=self._resolve_range_window(strategy_config),
             )
-        return TrendStrategy(state=TrendStrategyState(symbol=symbol))
+        short_window, long_window = self._resolve_trend_windows(strategy_config)
+        return TrendStrategy(
+            state=TrendStrategyState(symbol=symbol),
+            short_window=short_window,
+            long_window=long_window,
+        )
+
+    def _find_strategy_config(self, symbol: str) -> SignalStrategyConfig | None:
+        for strategy_config in self.strategy_configs:
+            if strategy_config.symbol == symbol:
+                return strategy_config
+        return None
+
+    def _resolve_range_window(
+        self,
+        strategy_config: SignalStrategyConfig | None,
+    ) -> int:
+        if strategy_config is not None and strategy_config.range_window is not None:
+            return strategy_config.range_window
+        return self.range_window
+
+    def _resolve_trend_windows(
+        self,
+        strategy_config: SignalStrategyConfig | None,
+    ) -> tuple[int, int]:
+        short_window = self.trend_short_window
+        long_window = self.trend_long_window
+        if strategy_config is not None and strategy_config.trend_short_window is not None:
+            short_window = strategy_config.trend_short_window
+        if strategy_config is not None and strategy_config.trend_long_window is not None:
+            long_window = strategy_config.trend_long_window
+        return short_window, long_window
