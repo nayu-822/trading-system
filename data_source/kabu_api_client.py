@@ -55,8 +55,23 @@ class KabuApiClient:
                 raise
             raise KabuApiError("kabu token request failed") from error
 
-    def get_orders(self, token: str) -> tuple[KabuOrderStatus, ...]:
-        """注文状態を取得し、構造化モデルへ変換する。"""
+    def get_orders(
+        self,
+        token: str,
+        symbol: str | None = None,
+        order_id: str | None = None,
+    ) -> tuple[KabuOrderStatus, ...]:
+        """注文状態を取得し、必要条件で絞り込んで返す。
+
+        Args:
+            token: kabuステーションAPIの認証トークン。
+            symbol: 対象銘柄。未指定時は全銘柄を返す。
+            order_id: 対象注文ID。未指定時は全注文を返す。
+        Returns:
+            APIレスポンスを変換した注文状態のタプル。
+        Raises:
+            KabuApiError: API取得やレスポンス変換に失敗した場合。
+        """
 
         try:
             response = self._request_json(
@@ -73,9 +88,23 @@ class KabuApiClient:
                 raise KabuApiError("orders response must be object or list")
             if not isinstance(orders, list):
                 raise KabuApiError("orders response must be list")
-            return tuple(self._to_order_status(order) for order in orders)
+            converted = tuple(self._to_order_status(order) for order in orders)
+            return tuple(
+                current_order
+                for current_order in converted
+                if (symbol is None or current_order.symbol == symbol)
+                and (
+                    order_id is None
+                    or current_order.order_id == order_id
+                    or current_order.external_order_id == order_id
+                )
+            )
         except Exception as error:
-            self.logger.exception("kabu orders request failed")
+            self.logger.exception(
+                "kabu orders request failed symbol=%s order_id=%s",
+                symbol or "",
+                order_id or "",
+            )
             if isinstance(error, KabuApiError):
                 raise
             raise KabuApiError("kabu orders request failed") from error
@@ -162,18 +191,23 @@ class KabuApiClient:
 
     def _to_order_status(self, data: Mapping[str, Any]) -> KabuOrderStatus:
         order_id = str(_pick(data, "order_id", "OrderID", "ID", "id"))
+        filled_quantity = _to_int(
+            _pick_optional(data, "filled_quantity", "FilledQuantity", "CumQty")
+        )
+        remaining_quantity = _to_int(
+            _pick_optional(data, "remaining_quantity", "RemainingQuantity", "LeavesQty")
+        )
+        quantity = _to_int(
+            _pick_optional(data, "quantity", "OrderQty", "Qty", "OrderQuantity")
+        )
         return KabuOrderStatus(
             order_id=order_id,
             symbol=_optional_str(_pick_optional(data, "symbol", "Symbol")),
+            side=_to_optional_order_side(_pick_optional(data, "side", "Side")),
+            quantity=quantity or filled_quantity + remaining_quantity,
             status=_to_order_status(_pick_optional(data, "status", "Status", "State")),
-            filled_quantity=_to_int(
-                _pick_optional(data, "filled_quantity", "FilledQuantity", "CumQty")
-            ),
-            remaining_quantity=_to_int(
-                _pick_optional(
-                    data, "remaining_quantity", "RemainingQuantity", "LeavesQty"
-                )
-            ),
+            filled_quantity=filled_quantity,
+            remaining_quantity=remaining_quantity,
             avg_price=_to_optional_float(
                 _pick_optional(data, "avg_price", "AvgPrice", "Price")
             ),
@@ -339,12 +373,29 @@ def _to_order_status(value: Any) -> OrderStatus:
         "PARTIALLY_FILLED": OrderStatus.PARTIALLY_FILLED,
         "FILLED": OrderStatus.FILLED,
         "CANCELED": OrderStatus.CANCELED,
+        "CANCELLED": OrderStatus.CANCELED,
+        "EXPIRED": OrderStatus.EXPIRED,
+        "FAILED": OrderStatus.FAILED,
         "REJECTED": OrderStatus.REJECTED,
         "1": OrderStatus.NEW,
         "2": OrderStatus.REQUESTED,
         "3": OrderStatus.REQUESTED,
         "4": OrderStatus.PARTIALLY_FILLED,
         "5": OrderStatus.FILLED,
+        "6": OrderStatus.CANCELED,
+        "7": OrderStatus.EXPIRED,
+        "8": OrderStatus.FAILED,
     }
     key = str(value or "NEW").upper()
     return status_map.get(key, OrderStatus.NEW)
+
+
+def _to_optional_order_side(value: Any) -> OrderSide | None:
+    if value is None:
+        return None
+    key = str(value).upper()
+    if key in {"BUY", "2"}:
+        return OrderSide.BUY
+    if key in {"SELL", "1"}:
+        return OrderSide.SELL
+    raise KabuApiError(f"unsupported order side={value}")

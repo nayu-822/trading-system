@@ -77,6 +77,8 @@ class OrderStatusPayload(BasePayload):
     filled_quantity: int
     remaining_quantity: int
     avg_price: float | None
+    side: OrderSide | None = None
+    order_quantity: int = 0
     external_order_id: str | None = None
 
 

@@ -339,6 +339,7 @@ def test_trading_process_updates_position_from_order_status() -> None:
     assert order.status == OrderStatus.FILLED
     assert state.position.quantity == 100
     assert state.position.average_price == 1000.0
+    assert len(state.orders) == 0
 
 
 def test_trading_process_publishes_position_updated_after_paper_fill() -> None:
@@ -475,6 +476,131 @@ def test_trading_process_updates_order_from_rest_status() -> None:
     assert state.position is not None
     assert state.position.quantity == 100
     assert state.position.average_price == 1000.0
+    assert len(state.orders) == 0
+
+
+def test_trading_process_restores_open_order_from_api_status() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(
+        _create_order_status_event(
+            order_id="api-order-1",
+            status=OrderStatus.REQUESTED,
+            filled_quantity=0,
+            remaining_quantity=100,
+            avg_price=None,
+            side=OrderSide.BUY,
+            order_quantity=100,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+    state = trading_process.get_state("7203")
+
+    assert len(state.orders) == 1
+    assert state.orders[0].order_id == "api-order-1"
+    assert state.orders[0].status == OrderStatus.REQUESTED
+
+
+def test_trading_process_keeps_partial_fill_in_open_orders() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    event_bus.publish(
+        _create_order_status_event(
+            order_id=order.order_id,
+            status=OrderStatus.PARTIALLY_FILLED,
+            filled_quantity=50,
+            remaining_quantity=50,
+            avg_price=1000.0,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert len(state.orders) == 1
+    assert order.status == OrderStatus.PARTIALLY_FILLED
+    assert order.filled_quantity == 50
+    assert state.position is not None
+    assert state.position.quantity == 50
+
+
+def test_trading_process_removes_canceled_order_from_open_orders() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    event_bus.publish(
+        _create_order_status_event(
+            order_id=order.order_id,
+            status=OrderStatus.CANCELED,
+            filled_quantity=0,
+            remaining_quantity=100,
+            avg_price=None,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert order.status == OrderStatus.CANCELED
+    assert len(state.orders) == 0
+
+
+def test_trading_process_removes_expired_order_from_open_orders() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    event_bus.publish(
+        _create_order_status_event(
+            order_id=order.order_id,
+            status=OrderStatus.EXPIRED,
+            filled_quantity=0,
+            remaining_quantity=100,
+            avg_price=None,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert order.status == OrderStatus.EXPIRED
+    assert len(state.orders) == 0
+
+
+def test_trading_process_calls_order_status_syncer_after_order() -> None:
+    sync_calls: list[str] = []
+    event_bus = EventBus()
+    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    trading_process.order_status_syncer = lambda: sync_calls.append("sync") or 0
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+
+    assert sync_calls == ["sync"]
 
 
 def test_trading_process_does_not_rollback_terminal_order_status() -> None:
@@ -512,6 +638,7 @@ def test_trading_process_does_not_rollback_terminal_order_status() -> None:
     assert order.status == OrderStatus.FILLED
     assert state.position is not None
     assert state.position.quantity == 100
+    assert len(state.orders) == 0
 
 
 def test_trading_process_ignores_duplicate_filled_event() -> None:
@@ -540,6 +667,7 @@ def test_trading_process_ignores_duplicate_filled_event() -> None:
     assert order.status == OrderStatus.FILLED
     assert state.position is not None
     assert state.position.quantity == 100
+    assert len(state.orders) == 0
 
 
 def test_trading_process_resyncs_order_status_after_restore() -> None:
@@ -560,6 +688,8 @@ def test_trading_process_resyncs_order_status_after_restore() -> None:
         auto_fill_orders=False,
     )
     restored_process.restore_snapshot(snapshot)
+    restored_state = restored_process.get_state("7203")
+    restored_order = restored_state.orders[0]
     restored_process.apply_order_status_events(
         (
             _create_order_status_event(
@@ -572,12 +702,11 @@ def test_trading_process_resyncs_order_status_after_restore() -> None:
             ),
         )
     )
-    restored_state = restored_process.get_state("7203")
-    restored_order = restored_state.orders[0]
 
     assert restored_order.status == OrderStatus.FILLED
     assert restored_state.position is not None
     assert restored_state.position.quantity == 100
+    assert len(restored_state.orders) == 0
 
 
 def test_trading_process_start_stop_start_does_not_duplicate_subscription() -> None:
@@ -752,6 +881,8 @@ def _create_order_status_event(
     avg_price: float | None,
     status: OrderStatus = OrderStatus.FILLED,
     remaining_quantity: int = 0,
+    side: OrderSide | None = None,
+    order_quantity: int = 0,
     source: EventSource = EventSource.TRADING,
 ) -> BaseEvent[Any]:
     timestamp = datetime(2026, 4, 18, tzinfo=timezone.utc)
@@ -765,6 +896,8 @@ def _create_order_status_event(
             filled_quantity=filled_quantity,
             remaining_quantity=remaining_quantity,
             avg_price=avg_price,
+            side=side,
+            order_quantity=order_quantity,
         ),
     )
 

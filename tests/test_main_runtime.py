@@ -207,12 +207,57 @@ def test_runtime_resyncs_order_status_after_restore(monkeypatch) -> None:
     restored_runtime.flush()
     restored_runtime.stop()
     restored_state = restored_runtime.trading_process.get_state("7203")
-    restored_order = restored_state.orders[0]
 
     assert fake_external.sync_count == 1
-    assert restored_order.status == OrderStatus.FILLED
     assert restored_state.position is not None
     assert restored_state.position.quantity == 100
+    assert len(restored_state.orders) == 0
+
+
+def test_runtime_restores_open_orders_from_api_on_startup(monkeypatch) -> None:
+    snapshot_dir = _test_dir("restore_open_orders")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+        snapshot_enabled=True,
+        recovery_enabled=True,
+    )
+    fake_external = _FakeExternalDataProcess(
+        events=(),
+        sync_events=(
+            EventFactory(source=EventSource.EXTERNAL_DATA).create(
+                event_type=EventType.ORDER_STATUS_UPDATED,
+                timestamp=_timestamp(),
+                symbol="7203",
+                payload=OrderStatusPayload(
+                    order_id="api-order-open-1",
+                    status=OrderStatus.REQUESTED,
+                    filled_quantity=0,
+                    remaining_quantity=100,
+                    avg_price=None,
+                    side=OrderSide.BUY,
+                    order_quantity=100,
+                    external_order_id="api-order-open-1",
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(fake_external),
+    )
+
+    runtime = app_main.build_application_runtime(config=config)
+    runtime.start()
+    runtime.flush()
+    runtime.stop()
+    state = runtime.trading_process.get_state("7203")
+
+    assert fake_external.sync_count == 1
+    assert len(state.orders) == 1
+    assert state.orders[0].order_id == "api-order-open-1"
+    assert state.orders[0].status == OrderStatus.REQUESTED
 
 
 def test_runtime_start_stop_start_does_not_duplicate_subscriptions(
@@ -370,7 +415,7 @@ class _FakeExternalDataProcess:
         for event in self.events:
             self.event_bus.publish(event)
 
-    def sync_orders_once(self) -> int:
+    def sync_orders_once(self, force_refresh: bool = False) -> int:
         if self.event_bus is None:
             raise AssertionError("event_bus is not configured")
         self.sync_count += 1

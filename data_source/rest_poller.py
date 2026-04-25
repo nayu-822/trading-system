@@ -4,10 +4,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import Event, Thread
 
-from data_source.kabu_api_client import KabuApiClient
 from domain.enums import EventSource, EventType
 from domain.events import EventFactory, OrderStatusPayload, OrderStatusUpdated
-from domain.models import KabuOrderStatus
+from domain.models import Order
+from infrastructure.repositories.order_status_repository import OrderStatusRepository
 
 OrderStatusHandler = Callable[[OrderStatusUpdated], None]
 
@@ -16,8 +16,7 @@ OrderStatusHandler = Callable[[OrderStatusUpdated], None]
 class RestPoller:
     """REST API の注文状態を定期取得し、イベントへ変換する。"""
 
-    api_client: KabuApiClient
-    token: str
+    order_status_repository: OrderStatusRepository
     interval_sec: float
     on_event: OrderStatusHandler | None = None
     event_factory: EventFactory = field(
@@ -45,29 +44,43 @@ class RestPoller:
         self._worker.join(timeout=max(self.interval_sec, 1.0))
         self._worker = None
 
-    def poll_once(self) -> tuple[OrderStatusUpdated, ...]:
-        """注文状態を1回取得して OrderStatusUpdated へ変換する。"""
+    def poll_once(self, force_refresh: bool = False) -> tuple[OrderStatusUpdated, ...]:
+        """注文状態を1回取得して OrderStatusUpdated へ変換する。
+
+        Args:
+            force_refresh: True の場合はキャッシュを使わず再取得する。
+        Returns:
+            取得した注文状態イベントのタプル。
+        """
 
         self.logger.info("order resync polling started")
-        order_statuses = self.api_client.get_orders(self.token)
-        events = tuple(self.to_event(order_status) for order_status in order_statuses)
+        orders = self.order_status_repository.list_orders(force_refresh=force_refresh)
+        events = tuple(self.to_event(order) for order in orders)
         self.logger.info("order resync polling completed count=%s", len(events))
         return events
 
-    def to_event(self, order_status: KabuOrderStatus) -> OrderStatusUpdated:
-        """構造化済み注文状態をイベントへ変換する。"""
+    def to_event(self, order: Order) -> OrderStatusUpdated:
+        """構造化済み注文状態をイベントへ変換する。
+
+        Args:
+            order: イベント化する注文状態。
+        Returns:
+            注文状態更新イベント。
+        """
 
         return self.event_factory.create(
             event_type=EventType.ORDER_STATUS_UPDATED,
             timestamp=datetime.now(timezone.utc),
-            symbol=order_status.symbol,
+            symbol=order.symbol,
             payload=OrderStatusPayload(
-                order_id=order_status.order_id,
-                status=order_status.status,
-                filled_quantity=order_status.filled_quantity,
-                remaining_quantity=order_status.remaining_quantity,
-                avg_price=order_status.avg_price,
-                external_order_id=order_status.external_order_id,
+                order_id=order.order_id,
+                status=order.status,
+                filled_quantity=order.filled_quantity,
+                remaining_quantity=order.remaining_quantity,
+                avg_price=order.avg_price,
+                side=order.side,
+                order_quantity=order.quantity,
+                external_order_id=order.external_order_id,
             ),
         )
 

@@ -28,6 +28,7 @@ from infrastructure.config_validator import ConfigValidationError, validate_conf
 from infrastructure.event_bus import EventBus
 from infrastructure.file_storage import FileStorage
 from infrastructure.logger import setup_logger
+from infrastructure.repositories.order_status_repository import OrderStatusRepository
 from infrastructure.repositories.position_repository import PositionRepository
 from processes.external_data_process import ExternalDataProcess
 from processes.persistence_process import PersistenceProcess
@@ -98,7 +99,7 @@ class ApplicationRuntime:
             if self.config.app.snapshot_enabled:
                 self.snapshot_process.start()
             self.trading_process.start()
-            self.sync_orders_once()
+            self.sync_orders_once(force_refresh=False)
             self.signal_process.start()
             self._publish_started_event()
             self._started = True
@@ -130,8 +131,14 @@ class ApplicationRuntime:
             symbol=enabled_symbol.code,
         )
 
-    def sync_orders_once(self) -> int:
-        """API モード起動時に REST 由来の注文状態を一度だけ再同期する。"""
+    def sync_orders_once(self, force_refresh: bool = False) -> int:
+        """REST由来の注文状態を一度だけ再同期する。
+
+        Args:
+            force_refresh: True の場合はキャッシュを使わず再取得する。
+        Returns:
+            再同期できた注文状態イベント数。
+        """
 
         if self.config.app.data_source_mode != DataSourceMode.API:
             return 0
@@ -140,7 +147,9 @@ class ApplicationRuntime:
             self.restored_snapshot,
         )
         try:
-            synced_count = self.external_data_process.sync_orders_once()
+            synced_count = self.external_data_process.sync_orders_once(
+                force_refresh=force_refresh
+            )
         except Exception:
             self.logger.exception("startup order resync failed")
             if self.config.app.trading_mode == TradingMode.LIVE:
@@ -260,6 +269,18 @@ def build_application_runtime(
         ),
         risk_manager=_build_risk_manager(config=config),
     )
+    external_data_process = _build_external_data_process(
+        event_bus=event_bus,
+        config=config,
+        logger=logger,
+    )
+    if (
+        config.app.data_source_mode == DataSourceMode.API
+        and config.app.trading_mode == TradingMode.LIVE
+    ):
+        trading_process.order_status_syncer = (
+            lambda: external_data_process.sync_orders_once(force_refresh=True)
+        )
     trading_process.order_gateway = _build_order_gateway(
         config=config,
         logger=logger,
@@ -277,11 +298,6 @@ def build_application_runtime(
         snapshot_path=snapshot_dir / "trading_snapshot.json",
         event_threshold=1,
         interval_sec=config.app.snapshot_interval_sec,
-    )
-    external_data_process = _build_external_data_process(
-        event_bus=event_bus,
-        config=config,
-        logger=logger,
     )
     return ApplicationRuntime(
         config=config,
@@ -309,9 +325,13 @@ def _build_external_data_process(
         push_client = PushClient(config=config.app.kabu_api)
         try:
             token = api_client.get_token()
-            rest_poller = RestPoller(
+            order_status_repository = OrderStatusRepository(
                 api_client=api_client,
                 token=token,
+                logger=logger,
+            )
+            rest_poller = RestPoller(
+                order_status_repository=order_status_repository,
                 interval_sec=config.app.rest_poll_interval_sec,
             )
         except KabuApiError:
@@ -347,6 +367,11 @@ def _build_order_gateway(
             token=token,
             logger=logger,
         )
+        order_status_repository = OrderStatusRepository(
+            api_client=api_client,
+            token=token,
+            logger=logger,
+        )
         return LiveOrderGateway(
             api_client=api_client,
             token=token,
@@ -358,8 +383,8 @@ def _build_order_gateway(
                 trade_symbols=config.app.trade_symbols,
                 enabled_symbols=enabled_symbols,
                 state_provider=_build_order_safety_state_provider(
-                    trading_process=trading_process,
                     position_repository=position_repository,
+                    order_status_repository=order_status_repository,
                 ),
                 logger=logger,
             ),
@@ -368,16 +393,22 @@ def _build_order_gateway(
 
 
 def _build_order_safety_state_provider(
-    trading_process: TradingProcess | None,
     position_repository: PositionRepository,
+    order_status_repository: OrderStatusRepository,
 ):
+    """注文前ガード用の状態取得関数を組み立てる。
+
+    Args:
+        position_repository: API建玉を取得するリポジトリ。
+        order_status_repository: API注文状態を取得するリポジトリ。
+    Returns:
+        銘柄ごとの建玉と未完了注文を返す関数。
+    """
+
     def provide(symbol: str) -> OrderSafetyState:
-        if trading_process is None:
-            raise ValueError("trading_process is not configured")
-        state = trading_process.get_state(symbol)
         return OrderSafetyState(
             position=position_repository.get_position(symbol),
-            open_orders=tuple(state.orders),
+            open_orders=tuple(order_status_repository.get_open_orders(symbol=symbol)),
         )
 
     return provide

@@ -64,14 +64,20 @@ class ExternalDataProcess:
             self.rest_poller.start()
         self._running_api = True
 
-    def sync_orders_once(self) -> int:
-        """REST から注文状態を再取得し、イベントとして publish する。"""
+    def sync_orders_once(self, force_refresh: bool = False) -> int:
+        """REST から注文状態を再取得し、イベントとして publish する。
+
+        Args:
+            force_refresh: True の場合はキャッシュを使わず再取得する。
+        Returns:
+            publishした注文状態イベント数。
+        """
 
         if self.rest_poller is None:
             self.logger.warning("order resync skipped because rest_poller is empty")
             return 0
         self.logger.info("order resync started")
-        events = self.rest_poller.poll_once()
+        events = self.rest_poller.poll_once(force_refresh=force_refresh)
         for event in events:
             self.event_bus.publish(event)
         self.logger.info("order resync completed count=%s", len(events))

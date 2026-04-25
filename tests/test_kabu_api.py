@@ -26,7 +26,7 @@ from domain.events import (
     OrderStatusPayload,
     OrderStatusUpdated,
 )
-from domain.models import KabuApiConfig, KabuOrderRequest, KabuOrderStatus
+from domain.models import KabuApiConfig, KabuOrderRequest, Order
 from infrastructure.event_bus import EventBus
 from processes.external_data_process import ExternalDataProcess
 
@@ -54,7 +54,9 @@ def test_kabu_api_client_gets_token_and_orders(monkeypatch) -> None:
                     {
                         "ID": "order-1",
                         "Symbol": "7203",
+                        "Side": "BUY",
                         "Status": "FILLED",
+                        "Qty": 100,
                         "CumQty": 100,
                         "LeavesQty": 0,
                         "AvgPrice": 1000.0,
@@ -75,6 +77,8 @@ def test_kabu_api_client_gets_token_and_orders(monkeypatch) -> None:
         ("GET", "http://localhost:18081/kabusapi/orders"),
     ]
     assert orders[0].order_id == "order-1"
+    assert orders[0].side == OrderSide.BUY
+    assert orders[0].quantity == 100
     assert orders[0].status == OrderStatus.FILLED
 
 
@@ -94,6 +98,48 @@ def test_kabu_api_client_logs_and_raises_on_failure(caplog) -> None:
         client.get_orders("token-1")
 
     assert "kabu orders request failed" in caplog.text
+
+
+def test_kabu_api_client_filters_orders_by_symbol_and_order_id() -> None:
+    def fake_request(
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: bytes | None,
+        timeout_sec: int,
+    ) -> bytes:
+        return json.dumps(
+            {
+                "Orders": [
+                    {
+                        "ID": "order-1",
+                        "Symbol": "7203",
+                        "Side": "BUY",
+                        "Status": "REQUESTED",
+                        "Qty": 100,
+                        "CumQty": 0,
+                        "LeavesQty": 100,
+                    },
+                    {
+                        "ID": "order-2",
+                        "Symbol": "6758",
+                        "Side": "SELL",
+                        "Status": "REQUESTED",
+                        "Qty": 50,
+                        "CumQty": 0,
+                        "LeavesQty": 50,
+                    },
+                ]
+            }
+        ).encode("utf-8")
+
+    client = KabuApiClient(config=_api_config(), http_request=fake_request)
+
+    orders = client.get_orders(token="token-1", symbol="7203", order_id="order-1")
+
+    assert len(orders) == 1
+    assert orders[0].order_id == "order-1"
+    assert orders[0].symbol == "7203"
 
 
 def test_kabu_api_client_sends_order_and_returns_result() -> None:
@@ -240,13 +286,17 @@ def test_push_client_warns_when_connector_is_not_configured(caplog) -> None:
 
 
 def test_rest_poller_converts_orders_to_events() -> None:
-    class FakeApiClient:
-        def get_orders(self, token: str) -> tuple[KabuOrderStatus, ...]:
-            assert token == "token-1"
+    class FakeOrderStatusRepository:
+        def list_orders(self, force_refresh: bool = False):
+            assert force_refresh is False
             return (
-                KabuOrderStatus(
+                Order(
                     order_id="order-1",
+                    external_order_id="order-1",
                     symbol="7203",
+                    side=OrderSide.BUY,
+                    quantity=100,
+                    order_type="MARKET",
                     status=OrderStatus.FILLED,
                     filled_quantity=100,
                     remaining_quantity=0,
@@ -255,8 +305,7 @@ def test_rest_poller_converts_orders_to_events() -> None:
             )
 
     poller = RestPoller(
-        api_client=FakeApiClient(),  # type: ignore[arg-type]
-        token="token-1",
+        order_status_repository=FakeOrderStatusRepository(),  # type: ignore[arg-type]
         interval_sec=5,
     )
 
@@ -266,31 +315,35 @@ def test_rest_poller_converts_orders_to_events() -> None:
     assert isinstance(events[0], OrderStatusUpdated)
     assert events[0].payload.order_id == "order-1"
     assert events[0].payload.status == OrderStatus.FILLED
+    assert events[0].payload.order_quantity == 100
+    assert events[0].payload.side == OrderSide.BUY
 
 
 def test_rest_poller_starts_periodic_polling() -> None:
-    class FakeApiClient:
+    class FakeOrderStatusRepository:
         def __init__(self) -> None:
             self.call_count = 0
 
-        def get_orders(self, token: str) -> tuple[KabuOrderStatus, ...]:
+        def list_orders(self, force_refresh: bool = False):
             self.call_count += 1
             return (
-                KabuOrderStatus(
+                Order(
                     order_id=f"order-{self.call_count}",
+                    external_order_id=f"order-{self.call_count}",
                     symbol="7203",
+                    side=OrderSide.BUY,
+                    quantity=100,
+                    order_type="MARKET",
                     status=OrderStatus.FILLED,
                     filled_quantity=100,
                     remaining_quantity=0,
                     avg_price=1000.0,
                 ),
             )
-
-    api_client = FakeApiClient()
+    order_status_repository = FakeOrderStatusRepository()
     received_events: list[OrderStatusUpdated] = []
     poller = RestPoller(
-        api_client=api_client,  # type: ignore[arg-type]
-        token="token-1",
+        order_status_repository=order_status_repository,  # type: ignore[arg-type]
         interval_sec=0.01,
         on_event=received_events.append,
     )
@@ -299,7 +352,7 @@ def test_rest_poller_starts_periodic_polling() -> None:
     _wait_until(lambda: len(received_events) >= 2)
     poller.stop()
 
-    assert api_client.call_count >= 2
+    assert order_status_repository.call_count >= 2
     assert received_events[0].payload.order_id == "order-1"
 
 
@@ -359,7 +412,7 @@ def test_external_data_process_switches_api_mode() -> None:
 
 def test_external_data_process_syncs_orders_once() -> None:
     class FakeRestPoller:
-        def poll_once(self) -> tuple[OrderStatusUpdated, ...]:
+        def poll_once(self, force_refresh: bool = False) -> tuple[OrderStatusUpdated, ...]:
             return (
                 EventFactory(source=EventSource.EXTERNAL_DATA).create(
                     event_type=EventType.ORDER_STATUS_UPDATED,

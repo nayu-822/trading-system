@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import uuid4
@@ -42,12 +43,16 @@ ORDER_STATUS_PRIORITY = {
     OrderStatus.PARTIALLY_FILLED: 2,
     OrderStatus.FILLED: 3,
     OrderStatus.CANCELED: 3,
+    OrderStatus.EXPIRED: 3,
+    OrderStatus.FAILED: 3,
     OrderStatus.REJECTED: 3,
 }
 
 TERMINAL_ORDER_STATUSES = {
     OrderStatus.FILLED,
     OrderStatus.CANCELED,
+    OrderStatus.EXPIRED,
+    OrderStatus.FAILED,
     OrderStatus.REJECTED,
 }
 
@@ -69,6 +74,7 @@ class TradingProcess:
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
     states: list[TradingSymbolState] = field(default_factory=list)
     latest_prices: list[tuple[str, float]] = field(default_factory=list)
+    order_status_syncer: Callable[[], int] | None = None
     _subscribed: bool = False
 
     def __post_init__(self) -> None:
@@ -210,6 +216,8 @@ class TradingProcess:
 
         order = self._find_order(event.payload.order_id)
         if order is None:
+            order = self._restore_order_from_status_event(event)
+        if order is None:
             self.logger.warning(
                 "order status ignored because order is unknown order_id=%s",
                 event.payload.order_id,
@@ -217,6 +225,14 @@ class TradingProcess:
             return
 
         state = self.get_state(order.symbol)
+        if not self._is_order_status_consistent(order=order, event=event):
+            self.logger.error(
+                "order status ignored because quantity is inconsistent order_id=%s order_quantity=%s filled_quantity=%s",
+                order.order_id,
+                order.quantity,
+                event.payload.filled_quantity,
+            )
+            return
         if not self._should_apply_order_status_update(order=order, event=event):
             self.logger.info(
                 "order status discarded order_id=%s current_status=%s incoming_status=%s reason=stale_or_duplicate",
@@ -265,6 +281,8 @@ class TradingProcess:
             order.filled_quantity,
             order.remaining_quantity,
         )
+        if order.status in TERMINAL_ORDER_STATUSES:
+            self._remove_order(state=state, order=order)
 
     def apply_order_status_events(self, events: tuple[OrderStatusUpdated, ...]) -> None:
         """再同期で取得した注文状態イベントを内部状態へ取り込む。"""
@@ -296,6 +314,22 @@ class TradingProcess:
 
         for status_event in status_events:
             self.event_bus.publish(status_event)
+        if self.order_status_syncer is None:
+            return
+        try:
+            synced_count = self.order_status_syncer()
+        except Exception:
+            self.logger.exception(
+                "order status sync failed after order order_id=%s", order.order_id
+            )
+            if self.risk_manager is not None:
+                self.risk_manager.on_api_error()
+            return
+        self.logger.info(
+            "order status sync completed after order order_id=%s synced_count=%s",
+            order.order_id,
+            synced_count,
+        )
 
     def _publish_position_updated(
         self,
@@ -560,6 +594,88 @@ class TradingProcess:
         if state.position is None:
             state.position = Position(symbol=state.symbol)
         return state.position
+
+    def _restore_order_from_status_event(
+        self,
+        event: OrderStatusUpdated,
+    ) -> Order | None:
+        """API同期イベントから未完了注文を復元する。
+
+        Args:
+            event: 復元元の注文状態更新イベント。
+        Returns:
+            復元した注文。復元不要または復元失敗時は None。
+        """
+
+        if event.symbol is None:
+            return None
+        if event.payload.status in TERMINAL_ORDER_STATUSES:
+            return None
+        if event.payload.side is None or event.payload.order_quantity < 1:
+            self.logger.error(
+                "order restore failed because required fields are missing order_id=%s side=%s order_quantity=%s",
+                event.payload.order_id,
+                event.payload.side,
+                event.payload.order_quantity,
+            )
+            return None
+        state = self.get_state(event.symbol)
+        order = Order(
+            order_id=event.payload.external_order_id or event.payload.order_id,
+            external_order_id=event.payload.external_order_id or event.payload.order_id,
+            symbol=event.symbol,
+            side=event.payload.side,
+            quantity=event.payload.order_quantity,
+            order_type="MARKET",
+            status=event.payload.status,
+            filled_quantity=event.payload.filled_quantity,
+            remaining_quantity=event.payload.remaining_quantity,
+            avg_price=event.payload.avg_price,
+        )
+        state.orders.append(order)
+        self.logger.info(
+            "order restored from api order_id=%s symbol=%s side=%s quantity=%s status=%s",
+            order.order_id,
+            order.symbol,
+            order.side.value,
+            order.quantity,
+            order.status.value,
+        )
+        return order
+
+    def _is_order_status_consistent(
+        self,
+        order: Order,
+        event: OrderStatusUpdated,
+    ) -> bool:
+        """注文数量と約定数量の整合を判定する。
+
+        Args:
+            order: 既存の内部注文。
+            event: 適用対象の注文状態更新イベント。
+        Returns:
+            整合している場合は True。
+        """
+
+        order_quantity = event.payload.order_quantity or order.quantity
+        return event.payload.filled_quantity <= order_quantity
+
+    def _remove_order(
+        self,
+        state: TradingSymbolState,
+        order: Order,
+    ) -> None:
+        """終端状態の注文を未完了注文一覧から取り除く。
+
+        Args:
+            state: 注文を保持する銘柄状態。
+            order: 取り除く注文。
+        Returns:
+            なし。
+        """
+
+        if order in state.orders:
+            state.orders.remove(order)
 
     def _update_position(
         self,

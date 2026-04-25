@@ -70,6 +70,8 @@ class LiveOrderGateway:
                 filled_quantity=result.filled_quantity,
                 remaining_quantity=result.remaining_quantity,
                 avg_price=result.avg_price,
+                side=order.side,
+                order_quantity=order.quantity,
                 external_order_id=result.order_id,
             ),
         )

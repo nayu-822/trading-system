@@ -79,6 +79,8 @@ class OrderStatus(str, Enum):
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
     FILLED = "FILLED"
     CANCELED = "CANCELED"
+    EXPIRED = "EXPIRED"
+    FAILED = "FAILED"
     REJECTED = "REJECTED"
 
 
