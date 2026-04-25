@@ -33,6 +33,7 @@ class MockOrderGateway:
                 avg_price=order.price or 0.0,
                 side=order.side,
                 order_quantity=order.quantity,
+                is_exit=order.is_exit,
             ),
         )
         return (filled_event,)
@@ -56,6 +57,7 @@ class MockOrderGateway:
                 avg_price=order.avg_price,
                 side=order.side,
                 order_quantity=order.quantity,
+                is_exit=order.is_exit,
             ),
         )
         return (canceled_event,)

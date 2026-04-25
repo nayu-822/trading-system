@@ -46,6 +46,7 @@ def test_order_status_repository_returns_order_status_by_order_id() -> None:
     assert order is not None
     assert order.symbol == "7203"
     assert order.side == OrderSide.BUY
+    assert order.is_exit is False
 
 
 def test_order_status_repository_raises_when_api_fails() -> None:
@@ -103,6 +104,20 @@ def test_order_status_repository_raises_when_symbol_is_empty() -> None:
     class FakeApiClient:
         def get_orders(self, token: str):
             return (_api_order(symbol=None),)
+
+    repository = OrderStatusRepository(
+        api_client=FakeApiClient(),  # type: ignore[arg-type]
+        token="token-1",
+    )
+
+    with pytest.raises(OrderStatusRepositoryError):
+        repository.list_orders()
+
+
+def test_order_status_repository_raises_when_is_exit_is_unknown() -> None:
+    class FakeApiClient:
+        def get_orders(self, token: str):
+            return (_api_order(is_exit=None),)
 
     repository = OrderStatusRepository(
         api_client=FakeApiClient(),  # type: ignore[arg-type]
@@ -174,6 +189,7 @@ def _api_order(
     status: OrderStatus = OrderStatus.REQUESTED,
     quantity: int = 100,
     filled_quantity: int = 0,
+    is_exit: bool | None = False,
 ):
     from domain.models import KabuOrderStatus
 
@@ -181,6 +197,7 @@ def _api_order(
         order_id=order_id,
         symbol=symbol,
         side=OrderSide.BUY,
+        is_exit=is_exit,
         quantity=quantity,
         status=status,
         filled_quantity=filled_quantity,

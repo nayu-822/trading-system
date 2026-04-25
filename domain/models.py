@@ -150,6 +150,7 @@ class KabuOrderStatus:
     order_id: str
     symbol: str | None
     side: OrderSide | None
+    is_exit: bool | None
     quantity: int
     status: OrderStatus
     filled_quantity: int

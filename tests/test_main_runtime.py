@@ -239,6 +239,7 @@ def test_runtime_restores_open_orders_from_api_on_startup(monkeypatch) -> None:
                     avg_price=None,
                     side=OrderSide.BUY,
                     order_quantity=100,
+                    is_exit=False,
                     external_order_id="api-order-open-1",
                 ),
             ),
@@ -285,6 +286,7 @@ def test_runtime_reflects_filled_order_from_api_on_startup(monkeypatch) -> None:
                     avg_price=1000.0,
                     side=OrderSide.BUY,
                     order_quantity=100,
+                    is_exit=False,
                     external_order_id="api-order-filled-1",
                 ),
             ),
@@ -562,6 +564,7 @@ def _order_status_event(order_id: str) -> BaseEvent[Any]:
             filled_quantity=100,
             remaining_quantity=0,
             avg_price=1000.0,
+            is_exit=False,
         ),
     )
 

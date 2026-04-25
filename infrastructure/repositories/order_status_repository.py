@@ -156,6 +156,10 @@ class OrderStatusRepository:
             raise OrderStatusRepositoryError(
                 f"order response side is empty: {order_status.order_id}"
             )
+        if order_status.is_exit is None:
+            raise OrderStatusRepositoryError(
+                f"order response is_exit is empty: {order_status.order_id}"
+            )
         if order_status.quantity < 1:
             raise OrderStatusRepositoryError(
                 f"order quantity must be positive: {order_status.order_id}"
@@ -176,6 +180,7 @@ class OrderStatusRepository:
             side=order_status.side,
             quantity=order_status.quantity,
             order_type="MARKET",
+            is_exit=order_status.is_exit,
             status=order_status.status,
             filled_quantity=order_status.filled_quantity,
             remaining_quantity=remaining_quantity,

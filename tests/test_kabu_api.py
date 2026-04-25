@@ -56,6 +56,7 @@ def test_kabu_api_client_gets_token_and_orders(monkeypatch) -> None:
                         "Symbol": "7203",
                         "Side": "BUY",
                         "Status": "FILLED",
+                        "CashMargin": 2,
                         "Qty": 100,
                         "CumQty": 100,
                         "LeavesQty": 0,
@@ -78,6 +79,7 @@ def test_kabu_api_client_gets_token_and_orders(monkeypatch) -> None:
     ]
     assert orders[0].order_id == "order-1"
     assert orders[0].side == OrderSide.BUY
+    assert orders[0].is_exit is False
     assert orders[0].quantity == 100
     assert orders[0].status == OrderStatus.FILLED
 
@@ -116,6 +118,7 @@ def test_kabu_api_client_filters_orders_by_symbol_and_order_id() -> None:
                         "Symbol": "7203",
                         "Side": "BUY",
                         "Status": "REQUESTED",
+                        "CashMargin": 2,
                         "Qty": 100,
                         "CumQty": 0,
                         "LeavesQty": 100,
@@ -125,6 +128,7 @@ def test_kabu_api_client_filters_orders_by_symbol_and_order_id() -> None:
                         "Symbol": "6758",
                         "Side": "SELL",
                         "Status": "REQUESTED",
+                        "CashMargin": 2,
                         "Qty": 50,
                         "CumQty": 0,
                         "LeavesQty": 50,
@@ -140,6 +144,39 @@ def test_kabu_api_client_filters_orders_by_symbol_and_order_id() -> None:
     assert len(orders) == 1
     assert orders[0].order_id == "order-1"
     assert orders[0].symbol == "7203"
+
+
+def test_kabu_api_client_parses_exit_flag() -> None:
+    def fake_request(
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: bytes | None,
+        timeout_sec: int,
+    ) -> bytes:
+        return json.dumps(
+            {
+                "Orders": [
+                    {
+                        "ID": "order-1",
+                        "Symbol": "7203",
+                        "Side": "SELL",
+                        "Status": "FILLED",
+                        "CashMargin": 3,
+                        "Qty": 100,
+                        "CumQty": 100,
+                        "LeavesQty": 0,
+                        "AvgPrice": 1000.0,
+                    }
+                ]
+            }
+        ).encode("utf-8")
+
+    client = KabuApiClient(config=_api_config(), http_request=fake_request)
+
+    orders = client.get_orders(token="token-1")
+
+    assert orders[0].is_exit is True
 
 
 def test_kabu_api_client_raises_when_order_status_is_unknown() -> None:
@@ -412,6 +449,7 @@ def test_rest_poller_converts_orders_to_events() -> None:
     assert events[0].payload.status == OrderStatus.FILLED
     assert events[0].payload.order_quantity == 100
     assert events[0].payload.side == OrderSide.BUY
+    assert events[0].payload.is_exit is False
 
 
 def test_rest_poller_starts_periodic_polling() -> None:
@@ -519,6 +557,7 @@ def test_external_data_process_syncs_orders_once() -> None:
                         filled_quantity=100,
                         remaining_quantity=0,
                         avg_price=1000.0,
+                        is_exit=False,
                     ),
                 ),
             )

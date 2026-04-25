@@ -204,6 +204,9 @@ class KabuApiClient:
             order_id=order_id,
             symbol=_optional_str(_pick_optional(data, "symbol", "Symbol")),
             side=_to_optional_order_side(_pick_optional(data, "side", "Side")),
+            is_exit=_to_optional_is_exit(
+                data,
+            ),
             quantity=quantity or filled_quantity + remaining_quantity,
             status=_to_order_status(_pick_optional(data, "status", "Status", "State")),
             filled_quantity=filled_quantity,
@@ -405,3 +408,25 @@ def _to_optional_order_side(value: Any) -> OrderSide | None:
     if key in {"SELL", "1"}:
         return OrderSide.SELL
     raise KabuApiError(f"unsupported order side={value}")
+
+
+def _to_optional_is_exit(data: Mapping[str, Any]) -> bool | None:
+    value = _pick_optional(
+        data,
+        "is_exit",
+        "IsExit",
+        "ClosePositionOrder",
+        "ClosePositions",
+        "cash_margin",
+        "CashMargin",
+    )
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return len(value) > 0
+    key = str(value).strip().upper()
+    if key in {"TRUE", "1", "CLOSE", "EXIT", "3"}:
+        return True
+    if key in {"FALSE", "0", "NEW", "ENTRY", "2"}:
+        return False
+    raise KabuApiError(f"unsupported order exit flag={value}")

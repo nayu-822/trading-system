@@ -332,6 +332,7 @@ def test_trading_process_updates_position_from_order_status() -> None:
             filled_quantity=100,
             remaining_quantity=0,
             avg_price=1000.0,
+            is_exit=False,
         ),
     )
     event_bus.publish(status_event)
@@ -503,6 +504,7 @@ def test_trading_process_restores_open_order_from_api_status() -> None:
             avg_price=None,
             side=OrderSide.BUY,
             order_quantity=100,
+            is_exit=False,
             source=EventSource.EXTERNAL_DATA,
         )
     )
@@ -511,6 +513,161 @@ def test_trading_process_restores_open_order_from_api_status() -> None:
     assert len(state.orders) == 1
     assert state.orders[0].order_id == "api-order-1"
     assert state.orders[0].status == OrderStatus.REQUESTED
+    assert state.orders[0].is_exit is False
+
+
+def test_trading_process_restored_exit_sell_reduces_long_position() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+    state = trading_process.get_state("7203")
+    assert state.position is not None
+    state.position.quantity = 100
+    state.position.average_price = 1000.0
+
+    trading_process.start()
+    event_bus.publish(
+        _create_order_status_event(
+            order_id="api-exit-sell-1",
+            status=OrderStatus.FILLED,
+            filled_quantity=100,
+            remaining_quantity=0,
+            avg_price=1010.0,
+            side=OrderSide.SELL,
+            order_quantity=100,
+            is_exit=True,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert state.position.quantity == 0
+    assert len(state.trade_histories) == 1
+    assert state.trade_histories[0].is_exit is True
+
+
+def test_trading_process_restored_exit_buy_reduces_short_position() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+    state = trading_process.get_state("7203")
+    assert state.position is not None
+    state.position.quantity = -100
+    state.position.average_price = 1000.0
+
+    trading_process.start()
+    event_bus.publish(
+        _create_order_status_event(
+            order_id="api-exit-buy-1",
+            status=OrderStatus.FILLED,
+            filled_quantity=100,
+            remaining_quantity=0,
+            avg_price=990.0,
+            side=OrderSide.BUY,
+            order_quantity=100,
+            is_exit=True,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert state.position.quantity == 0
+    assert len(state.trade_histories) == 1
+    assert state.trade_histories[0].is_exit is True
+
+
+def test_trading_process_restored_new_buy_increases_long_position() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(
+        _create_order_status_event(
+            order_id="api-entry-buy-1",
+            status=OrderStatus.FILLED,
+            filled_quantity=100,
+            remaining_quantity=0,
+            avg_price=1000.0,
+            side=OrderSide.BUY,
+            order_quantity=100,
+            is_exit=False,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+    state = trading_process.get_state("7203")
+
+    assert state.position is not None
+    assert state.position.quantity == 100
+    assert len(state.trade_histories) == 1
+    assert state.trade_histories[0].is_exit is False
+
+
+def test_trading_process_restored_new_sell_increases_short_position() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(
+        _create_order_status_event(
+            order_id="api-entry-sell-1",
+            status=OrderStatus.FILLED,
+            filled_quantity=100,
+            remaining_quantity=0,
+            avg_price=1000.0,
+            side=OrderSide.SELL,
+            order_quantity=100,
+            is_exit=False,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+    state = trading_process.get_state("7203")
+
+    assert state.position is not None
+    assert state.position.quantity == -100
+    assert len(state.trade_histories) == 1
+    assert state.trade_histories[0].is_exit is False
+
+
+def test_trading_process_ignores_when_existing_order_is_exit_conflicts() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        auto_fill_orders=False,
+    )
+
+    trading_process.start()
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    state = trading_process.get_state("7203")
+    order = state.orders[0]
+    event_bus.publish(
+        _create_order_status_event(
+            order_id=order.order_id,
+            status=OrderStatus.FILLED,
+            filled_quantity=100,
+            remaining_quantity=0,
+            avg_price=1000.0,
+            is_exit=True,
+            source=EventSource.EXTERNAL_DATA,
+        )
+    )
+
+    assert state.position is not None
+    assert state.position.quantity == 0
+    assert len(state.trade_histories) == 0
+    assert len(state.orders) == 1
 
 
 def test_trading_process_keeps_partial_fill_in_open_orders() -> None:
@@ -922,6 +1079,7 @@ def test_trading_process_reduces_position_when_exit_sell_fills() -> None:
             filled_quantity=100,
             remaining_quantity=0,
             avg_price=1010.0,
+            is_exit=True,
             source=EventSource.EXTERNAL_DATA,
         )
     )
@@ -960,6 +1118,7 @@ def test_trading_process_ignores_exit_fill_without_position() -> None:
             filled_quantity=100,
             remaining_quantity=0,
             avg_price=1010.0,
+            is_exit=True,
             source=EventSource.EXTERNAL_DATA,
         )
     )
@@ -1250,6 +1409,7 @@ def _create_order_status_event(
     remaining_quantity: int = 0,
     side: OrderSide | None = None,
     order_quantity: int = 0,
+    is_exit: bool = False,
     source: EventSource = EventSource.TRADING,
 ) -> BaseEvent[Any]:
     timestamp = datetime(2026, 4, 18, tzinfo=timezone.utc)
@@ -1265,6 +1425,7 @@ def _create_order_status_event(
             avg_price=avg_price,
             side=side,
             order_quantity=order_quantity,
+            is_exit=is_exit,
         ),
     )
 

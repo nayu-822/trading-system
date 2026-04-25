@@ -72,6 +72,7 @@ class LiveOrderGateway:
                 avg_price=result.avg_price,
                 side=order.side,
                 order_quantity=order.quantity,
+                is_exit=order.is_exit,
                 external_order_id=result.order_id,
             ),
         )

@@ -79,6 +79,7 @@ class OrderStatusPayload(BasePayload):
     avg_price: float | None
     side: OrderSide | None = None
     order_quantity: int = 0
+    is_exit: bool = False
     external_order_id: str | None = None
 
 

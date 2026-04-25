@@ -232,6 +232,16 @@ class TradingProcess:
             return
 
         state = self.get_state(order.symbol)
+        if not self._is_order_exit_consistent(order=order, event=event):
+            self.logger.error(
+                "order status ignored because is_exit is inconsistent order_id=%s current_is_exit=%s incoming_is_exit=%s",
+                order.order_id,
+                order.is_exit,
+                event.payload.is_exit,
+            )
+            if self.risk_manager is not None:
+                self.risk_manager.on_api_error()
+            return
         if not self._is_order_status_consistent(order=order, event=event):
             self.logger.error(
                 "order status ignored because quantity is inconsistent order_id=%s order_quantity=%s filled_quantity=%s",
@@ -677,6 +687,7 @@ class TradingProcess:
             side=event.payload.side,
             quantity=event.payload.order_quantity,
             order_type="MARKET",
+            is_exit=event.payload.is_exit,
             status=OrderStatus.REQUESTED,
             filled_quantity=0,
             remaining_quantity=event.payload.order_quantity,
@@ -712,6 +723,22 @@ class TradingProcess:
             order.reflected_filled_quantity <= event.payload.filled_quantity
             and event.payload.filled_quantity <= order_quantity
         )
+
+    def _is_order_exit_consistent(
+        self,
+        order: Order,
+        event: OrderStatusUpdated,
+    ) -> bool:
+        """既存注文と同期イベントの is_exit 整合性を判定する。
+
+        Args:
+            order: 既存の内部注文。
+            event: 同期対象の注文状態更新イベント。
+        Returns:
+            矛盾がない場合は True。
+        """
+
+        return order.is_exit == event.payload.is_exit
 
     def _remove_order(
         self,
