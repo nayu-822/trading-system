@@ -11,6 +11,7 @@ from domain.enums import (
     DataSourceMode,
     EventSource,
     EventType,
+    KabuApiEnvironment,
     StrategyType,
     TradingMode,
 )
@@ -42,6 +43,10 @@ DEFAULT_CSV_PATH = Path("data/market_data.csv")
 DEFAULT_LOG_LEVEL = "INFO"
 
 
+class LiveOrderNotAllowedError(ValueError):
+    """実注文が許可されていない組み合わせであることを示す例外。"""
+
+
 @dataclass
 class ApplicationRuntime:
     """各プロセスの起動・停止順序を管理する。"""
@@ -68,12 +73,15 @@ class ApplicationRuntime:
             symbol.code for symbol in self.config.symbols if symbol.enabled
         )
         self.logger.info(
-            "application starting mode=%s data_source_mode=%s trading_mode=%s symbols=%s",
+            "application starting mode=%s data_source_mode=%s trading_mode=%s kabu_api_environment=%s base_url=%s symbols=%s",
             self.config.app.mode.value,
             self.config.app.data_source_mode.value,
             self.config.app.trading_mode.value,
+            self.config.app.kabu_api.environment.value,
+            self.config.app.kabu_api.base_url,
             ",".join(enabled_symbols),
         )
+        _log_kabu_api_environment_warnings(self.logger, self.config)
         if self.config.app.trading_mode == TradingMode.LIVE:
             self.logger.warning(
                 "LIVE MODE starting gateway=LiveOrderGateway symbols=%s",
@@ -205,10 +213,12 @@ def initialize_application(
         runtime.stop()
         raise
     runtime.logger.info(
-        "application initialized mode=%s data_source_mode=%s trading_mode=%s",
+        "application initialized mode=%s data_source_mode=%s trading_mode=%s kabu_api_environment=%s base_url=%s",
         config.app.mode.value,
         config.app.data_source_mode.value,
         config.app.trading_mode.value,
+        config.app.kabu_api.environment.value,
+        config.app.kabu_api.base_url,
     )
     return runtime.event_bus, runtime.logger
 
@@ -312,6 +322,7 @@ def _build_order_gateway(config: SystemConfig, logger: logging.Logger) -> OrderG
     if config.app.trading_mode == TradingMode.PAPER:
         return MockOrderGateway()
     if config.app.trading_mode == TradingMode.LIVE:
+        _ensure_live_order_allowed(config)
         enabled_symbols = tuple(
             symbol.code for symbol in config.symbols if symbol.enabled
         )
@@ -327,6 +338,39 @@ def _build_order_gateway(config: SystemConfig, logger: logging.Logger) -> OrderG
             allowed_symbols=enabled_symbols,
         )
     raise ValueError(f"unsupported trading_mode={config.app.trading_mode.value}")
+
+
+def _ensure_live_order_allowed(config: SystemConfig) -> None:
+    if (
+        config.app.trading_mode == TradingMode.LIVE
+        and config.app.kabu_api.environment == KabuApiEnvironment.LIVE
+    ):
+        return
+    raise LiveOrderNotAllowedError(
+        "live order requires trading_mode=live and kabu_api_environment=live"
+    )
+
+
+def _log_kabu_api_environment_warnings(
+    logger: logging.Logger,
+    config: SystemConfig,
+) -> None:
+    if (
+        config.app.trading_mode == TradingMode.PAPER
+        and config.app.kabu_api.environment == KabuApiEnvironment.LIVE
+    ):
+        logger.warning(
+            "kabu api environment mismatch trading_mode=paper kabu_api_environment=live base_url=%s real orders are disabled",
+            config.app.kabu_api.base_url,
+        )
+    if (
+        config.app.trading_mode == TradingMode.LIVE
+        and config.app.kabu_api.environment == KabuApiEnvironment.PAPER
+    ):
+        logger.warning(
+            "kabu api environment mismatch trading_mode=live kabu_api_environment=paper base_url=%s real orders are disabled",
+            config.app.kabu_api.base_url,
+        )
 
 
 def _build_risk_manager(config: SystemConfig) -> RiskManager:

@@ -24,6 +24,11 @@ class TradingMode(str, Enum):
     LIVE = "live"
 
 
+class KabuApiEnvironment(str, Enum):
+    PAPER = "paper"
+    LIVE = "live"
+
+
 class EventType(str, Enum):
     """システム内で扱うイベント種別。"""
 

@@ -3,9 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from domain.enums import DataSourceMode, RunMode, TradingMode
+from domain.enums import DataSourceMode, KabuApiEnvironment, RunMode, TradingMode
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
+from main import LiveOrderNotAllowedError, _ensure_live_order_allowed
 
 
 def test_load_config_returns_structured_model() -> None:
@@ -16,8 +17,9 @@ def test_load_config_returns_structured_model() -> None:
     assert config.app.live_enabled is False
     assert config.app.data_source_mode == DataSourceMode.CSV
     assert config.app.log_level == "INFO"
-    assert config.app.kabu_api.base_url == "http://localhost:18080/kabusapi"
-    assert config.app.kabu_api.push_url == "ws://localhost:18080/kabusapi/websocket"
+    assert config.app.kabu_api.environment == KabuApiEnvironment.PAPER
+    assert config.app.kabu_api.base_url == "http://localhost:18081/kabusapi"
+    assert config.app.kabu_api.push_url == "ws://localhost:18081/kabusapi/websocket"
     assert config.app.kabu_api.timeout_sec == 5
     assert config.app.kabu_api.token_env_name == "KABU_API_PASSWORD"
     assert config.symbols[0].code == "7203"
@@ -181,3 +183,109 @@ def test_validate_config_rejects_allocation_total_over_one() -> None:
 
     with pytest.raises(ConfigValidationError):
         validate_config(invalid_config)
+
+
+def test_load_config_defaults_environment_to_paper_when_trading_mode_is_paper() -> None:
+    app_config = _build_test_app_config(
+        trading_mode=TradingMode.PAPER,
+        kabu_api_environment=None,
+    )
+
+    assert app_config.kabu_api.environment == KabuApiEnvironment.PAPER
+
+
+def test_load_config_defaults_environment_to_live_when_trading_mode_is_live() -> None:
+    app_config = _build_test_app_config(
+        trading_mode=TradingMode.LIVE,
+        kabu_api_environment=None,
+    )
+
+    assert app_config.kabu_api.environment == KabuApiEnvironment.LIVE
+
+
+def test_load_config_sets_paper_port_when_environment_is_paper() -> None:
+    app_config = _build_test_app_config(kabu_api_environment="paper")
+
+    assert app_config.kabu_api.base_url == "http://localhost:18081/kabusapi"
+    assert app_config.kabu_api.push_url == "ws://localhost:18081/kabusapi/websocket"
+
+
+def test_load_config_sets_live_port_when_environment_is_live() -> None:
+    app_config = _build_test_app_config(kabu_api_environment="live")
+
+    assert app_config.kabu_api.base_url == "http://localhost:18080/kabusapi"
+    assert app_config.kabu_api.push_url == "ws://localhost:18080/kabusapi/websocket"
+
+
+def test_load_config_prioritizes_explicit_base_url() -> None:
+    app_config = _build_test_app_config(
+        kabu_api_environment="paper",
+        kabu_api_base_url="http://example.local/custom",
+    )
+
+    assert app_config.kabu_api.base_url == "http://example.local/custom"
+
+
+@pytest.mark.parametrize(
+    ("trading_mode", "environment", "allowed"),
+    [
+        (TradingMode.LIVE, KabuApiEnvironment.LIVE, True),
+        (TradingMode.LIVE, KabuApiEnvironment.PAPER, False),
+        (TradingMode.PAPER, KabuApiEnvironment.LIVE, False),
+        (TradingMode.PAPER, KabuApiEnvironment.PAPER, False),
+    ],
+)
+def test_live_order_permission_matrix(
+    trading_mode: TradingMode,
+    environment: KabuApiEnvironment,
+    allowed: bool,
+) -> None:
+    config = load_config(Path("config"))
+    target_config = replace(
+        config,
+        app=replace(
+            config.app,
+            trading_mode=trading_mode,
+            kabu_api=replace(config.app.kabu_api, environment=environment),
+        ),
+    )
+
+    if allowed:
+        _ensure_live_order_allowed(target_config)
+        return
+
+    with pytest.raises(LiveOrderNotAllowedError):
+        _ensure_live_order_allowed(target_config)
+
+
+def _build_test_app_config(
+    trading_mode: TradingMode = TradingMode.PAPER,
+    kabu_api_environment: str | None = None,
+    kabu_api_base_url: str | None = None,
+):
+    from infrastructure.config_loader import _build_app_config
+
+    data = {
+        "mode": "mock",
+        "trading_mode": trading_mode.value,
+        "live_enabled": False,
+        "data_source_mode": "csv",
+        "log_level": "INFO",
+        "rest_poll_interval_sec": 5,
+        "push_enabled": False,
+        "api_timeout_sec": 5,
+        "token_env_name": "KABU_API_PASSWORD",
+        "snapshot_enabled": False,
+        "snapshot_dir": "snapshots",
+        "snapshot_interval_sec": 60,
+        "snapshot_max_generations": 3,
+        "snapshot_debounce_sec": 5,
+        "recovery_enabled": False,
+        "recovery_mode": "manual",
+        "startup_reconcile_enabled": False,
+    }
+    if kabu_api_environment is not None:
+        data["kabu_api_environment"] = kabu_api_environment
+    if kabu_api_base_url is not None:
+        data["kabu_api_base_url"] = kabu_api_base_url
+    return _build_app_config(data)

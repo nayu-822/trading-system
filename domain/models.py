@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 
 from domain.enums import (
     DataSourceMode,
+    KabuApiEnvironment,
     OrderSide,
     OrderStatus,
     RunMode,
@@ -115,6 +116,7 @@ class TradingSymbolState:
 class KabuApiConfig:
     """kabuステーション API 接続設定。"""
 
+    environment: KabuApiEnvironment
     base_url: str
     push_url: str
     timeout_sec: int

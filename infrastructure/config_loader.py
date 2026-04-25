@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from domain.enums import DataSourceMode, RunMode, TradingMode
+from domain.enums import DataSourceMode, KabuApiEnvironment, RunMode, TradingMode
 from domain.models import (
     AppConfig,
     AutoStrategyConfig,
@@ -170,21 +170,26 @@ def _parse_scalar(
 
 
 def _build_app_config(data: dict[str, Any]) -> AppConfig:
+    trading_mode = TradingMode(str(data.get("trading_mode", "paper")))
+    environment = _resolve_kabu_api_environment(
+        data.get("kabu_api_environment"),
+        trading_mode=trading_mode,
+    )
+    base_url = str(data.get("kabu_api_base_url") or _build_kabu_api_base_url(environment))
+    push_url = str(data.get("kabu_push_url") or _build_kabu_push_url(environment))
+
     return AppConfig(
         mode=RunMode(str(data["mode"])),
-        trading_mode=TradingMode(str(data.get("trading_mode", "paper"))),
+        trading_mode=trading_mode,
         live_enabled=bool(data.get("live_enabled", False)),
         data_source_mode=DataSourceMode(str(data.get("data_source_mode", "csv"))),
         log_level=str(data["log_level"]).upper(),
         rest_poll_interval_sec=int(data["rest_poll_interval_sec"]),
         push_enabled=bool(data["push_enabled"]),
         kabu_api=KabuApiConfig(
-            base_url=str(
-                data.get("kabu_api_base_url", "http://localhost:18080/kabusapi")
-            ),
-            push_url=str(
-                data.get("kabu_push_url", "ws://localhost:18080/kabusapi/websocket")
-            ),
+            environment=environment,
+            base_url=base_url,
+            push_url=push_url,
             timeout_sec=int(data.get("api_timeout_sec", 5)),
             token_env_name=str(data.get("token_env_name", "KABU_API_PASSWORD")),
         ),
@@ -197,6 +202,33 @@ def _build_app_config(data: dict[str, Any]) -> AppConfig:
         recovery_mode=str(data["recovery_mode"]),
         startup_reconcile_enabled=bool(data["startup_reconcile_enabled"]),
     )
+
+
+def _resolve_kabu_api_environment(
+    value: Any,
+    trading_mode: TradingMode,
+) -> KabuApiEnvironment:
+    if value is not None:
+        return KabuApiEnvironment(str(value))
+    if trading_mode == TradingMode.LIVE:
+        return KabuApiEnvironment.LIVE
+    return KabuApiEnvironment.PAPER
+
+
+def _build_kabu_api_base_url(environment: KabuApiEnvironment) -> str:
+    port = _resolve_kabu_api_port(environment)
+    return f"http://localhost:{port}/kabusapi"
+
+
+def _build_kabu_push_url(environment: KabuApiEnvironment) -> str:
+    port = _resolve_kabu_api_port(environment)
+    return f"ws://localhost:{port}/kabusapi/websocket"
+
+
+def _resolve_kabu_api_port(environment: KabuApiEnvironment) -> int:
+    if environment == KabuApiEnvironment.LIVE:
+        return 18080
+    return 18081
 
 
 def _build_symbol_configs(data: dict[str, Any]) -> list[SymbolConfig]:
