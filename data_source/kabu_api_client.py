@@ -387,7 +387,9 @@ def _to_order_status(value: Any) -> OrderStatus:
         "8": OrderStatus.FAILED,
     }
     key = str(value or "NEW").upper()
-    return status_map.get(key, OrderStatus.NEW)
+    if key not in status_map:
+        raise KabuApiError(f"unsupported order status={value}")
+    return status_map[key]
 
 
 def _to_optional_order_side(value: Any) -> OrderSide | None:

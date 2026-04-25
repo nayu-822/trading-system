@@ -603,6 +603,49 @@ def test_trading_process_calls_order_status_syncer_after_order() -> None:
     assert sync_calls == ["sync"]
 
 
+def test_trading_process_does_not_additional_order_when_order_status_sync_fails() -> None:
+    class RequestedApiClient:
+        def send_order(
+            self,
+            token: str,
+            order_request: KabuOrderRequest,
+        ) -> KabuOrderResult:
+            return KabuOrderResult(
+                order_id="api-order-1",
+                symbol=order_request.symbol,
+                status=OrderStatus.REQUESTED,
+                filled_quantity=0,
+                remaining_quantity=order_request.quantity,
+                avg_price=None,
+            )
+
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        order_quantity=100,
+        order_gateway=LiveOrderGateway(
+            api_client=RequestedApiClient(),  # type: ignore[arg-type]
+            token="token-1",
+            allowed_symbols=("7203",),
+            safety_validator=_live_validator(),
+        ),
+    )
+    trading_process.order_status_syncer = lambda: (_ for _ in ()).throw(
+        KabuApiError("unsupported order status=UNKNOWN_STATUS")
+    )
+    received_orders: list[BaseEvent[Any]] = []
+
+    trading_process.start()
+    event_bus.subscribe(EventType.ORDER_REQUESTED, received_orders.append)
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+    event_bus.publish(_create_signal_event(SignalType.SELL))
+    state = trading_process.get_state("7203")
+
+    assert len(received_orders) == 1
+    assert len(state.orders) == 1
+    assert state.orders[0].status == OrderStatus.REQUESTED
+
+
 def test_trading_process_does_not_rollback_terminal_order_status() -> None:
     event_bus = EventBus()
     trading_process = TradingProcess(

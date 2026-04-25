@@ -62,6 +62,20 @@ def test_order_status_repository_raises_when_api_fails() -> None:
         repository.get_open_orders(symbol="7203")
 
 
+def test_order_status_repository_raises_when_order_status_is_unknown() -> None:
+    class FakeApiClient:
+        def get_orders(self, token: str):
+            raise KabuApiError("unsupported order status=UNKNOWN_STATUS")
+
+    repository = OrderStatusRepository(
+        api_client=FakeApiClient(),  # type: ignore[arg-type]
+        token="token-1",
+    )
+
+    with pytest.raises(OrderStatusRepositoryError):
+        repository.get_open_orders(symbol="7203")
+
+
 def test_order_status_repository_raises_when_symbol_is_empty() -> None:
     class FakeApiClient:
         def get_orders(self, token: str):

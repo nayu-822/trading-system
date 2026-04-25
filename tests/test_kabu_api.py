@@ -142,6 +142,36 @@ def test_kabu_api_client_filters_orders_by_symbol_and_order_id() -> None:
     assert orders[0].symbol == "7203"
 
 
+def test_kabu_api_client_raises_when_order_status_is_unknown() -> None:
+    def fake_request(
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: bytes | None,
+        timeout_sec: int,
+    ) -> bytes:
+        return json.dumps(
+            {
+                "Orders": [
+                    {
+                        "ID": "order-1",
+                        "Symbol": "7203",
+                        "Side": "BUY",
+                        "Status": "UNKNOWN_STATUS",
+                        "Qty": 100,
+                        "CumQty": 0,
+                        "LeavesQty": 100,
+                    }
+                ]
+            }
+        ).encode("utf-8")
+
+    client = KabuApiClient(config=_api_config(), http_request=fake_request)
+
+    with pytest.raises(KabuApiError):
+        client.get_orders(token="token-1")
+
+
 def test_kabu_api_client_sends_order_and_returns_result() -> None:
     calls: list[tuple[str, str, Mapping[str, str], dict[str, Any]]] = []
 
