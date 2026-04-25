@@ -1,7 +1,10 @@
 import logging
+import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event
+from typing import Any
 
 from data_source.csv_loader import CsvMarketDataLoader
 from data_source.kabu_api_client import KabuApiClient, KabuApiError
@@ -23,6 +26,7 @@ from domain.models import (
     RiskSymbolConfig,
     SignalStrategyConfig,
     SystemConfig,
+    TradingHaltState,
     TradingSymbolConfig,
 )
 from infrastructure.clock import RealClock
@@ -116,6 +120,12 @@ class ApplicationRuntime:
             self.logger.exception("application startup failed")
             self.stop()
             raise
+
+    def restore_snapshot_state(self) -> bool:
+        """スナップショットから状態を復元する。"""
+
+        self.restored_snapshot = self.snapshot_process.restore()
+        return self.restored_snapshot
 
     def run_external_data(self) -> None:
         enabled_symbol = next(
@@ -239,8 +249,28 @@ class ApplicationRuntime:
                 risk_manager.state.requires_manual_resume,
             )
             return False
+        started_temporarily = False
+        if not self.trading_process._subscribed:
+            self.trading_process.start()
+            started_temporarily = True
         try:
             self.external_data_process.sync_orders_once(force_refresh=True)
+            self.reconcile_positions()
+            if not self._open_orders_match_api():
+                risk_manager.halt_trading(
+                    reason=TradingHaltReason.ORDER_SYNC_FAILED,
+                    message="open orders are not synchronized with api",
+                )
+                self._log_resume_failed()
+                return False
+            enabled_symbols = tuple(
+                symbol.code for symbol in self.config.symbols if symbol.enabled
+            )
+            if self.reconcile_positions(symbols=enabled_symbols) != len(enabled_symbols):
+                self._log_resume_failed()
+                return False
+            risk_manager.resume_trading("manual resume completed")
+            return True
         except Exception as error:
             risk_manager.halt_trading(
                 reason=TradingHaltReason.ORDER_SYNC_FAILED,
@@ -248,22 +278,9 @@ class ApplicationRuntime:
             )
             self._log_resume_failed()
             return False
-        self.reconcile_positions()
-        if not self._open_orders_match_api():
-            risk_manager.halt_trading(
-                reason=TradingHaltReason.ORDER_SYNC_FAILED,
-                message="open orders are not synchronized with api",
-            )
-            self._log_resume_failed()
-            return False
-        enabled_symbols = tuple(
-            symbol.code for symbol in self.config.symbols if symbol.enabled
-        )
-        if self.reconcile_positions(symbols=enabled_symbols) != len(enabled_symbols):
-            self._log_resume_failed()
-            return False
-        risk_manager.resume_trading("manual resume completed")
-        return True
+        finally:
+            if started_temporarily:
+                self.trading_process.stop()
 
     def wait(self, stop_event: Event | None = None) -> None:
         """API モードでは停止要求まで待機し、CSV モードでは即時に戻る。"""
@@ -382,6 +399,157 @@ class ApplicationRuntime:
             risk_manager.state.trading_halt_resolved_at,
             risk_manager.state.requires_manual_resume,
         )
+
+    def get_trading_halt_state(self) -> TradingHaltState:
+        """現在の取引停止状態を返す。"""
+
+        risk_manager = self.trading_process.risk_manager
+        if risk_manager is None:
+            return TradingHaltState()
+        return TradingHaltState(
+            is_halted=risk_manager.state.kill_switch_active,
+            reason=risk_manager.state.trading_halt_reason,
+            message=risk_manager.state.trading_halt_message,
+            halted_at=risk_manager.state.trading_halt_halted_at,
+            resolved_at=risk_manager.state.trading_halt_resolved_at,
+            requires_manual_resume=risk_manager.state.requires_manual_resume,
+        )
+
+    def halt_trading_manually(
+        self,
+        reason: TradingHaltReason,
+        message: str,
+    ) -> TradingHaltState:
+        """手動で取引停止状態にする。"""
+
+        risk_manager = self.trading_process.risk_manager
+        if risk_manager is None:
+            return TradingHaltState()
+        risk_manager.halt_trading(
+            reason=reason,
+            message=message,
+            requires_manual_resume=True,
+        )
+        return self.get_trading_halt_state()
+
+    def save_snapshot_now(self) -> None:
+        """現在状態を即時にスナップショット保存する。"""
+
+        self.snapshot_process.start()
+        self.snapshot_process.save_snapshot(self.clock.now())
+        self.snapshot_process.flush()
+        self.snapshot_process.stop()
+
+    def run_preflight_check(self) -> dict[str, Any]:
+        """取引再開前の確認だけを実行する。"""
+
+        checks: list[dict[str, Any]] = []
+        errors: list[str] = []
+        rest_poller = getattr(self.external_data_process, "rest_poller", None)
+        order_sync_ok = False
+        if self.config.app.data_source_mode != DataSourceMode.API or rest_poller is None:
+            message = "api order sync is unavailable"
+            checks.append({"name": "order_status_sync", "ok": False, "message": message})
+            errors.append(message)
+        else:
+            try:
+                rest_poller.order_status_repository.list_orders(force_refresh=True)
+                order_sync_ok = True
+                checks.append(
+                    {"name": "order_status_sync", "ok": True, "message": "ok"}
+                )
+            except Exception as error:
+                message = f"order status sync failed: {error}"
+                checks.append(
+                    {"name": "order_status_sync", "ok": False, "message": message}
+                )
+                errors.append(message)
+
+        open_orders_ok = order_sync_ok and self._open_orders_match_api()
+        checks.append(
+            {
+                "name": "open_orders_match",
+                "ok": open_orders_ok,
+                "message": "ok" if open_orders_ok else "open orders are not synchronized with api",
+            }
+        )
+        if not open_orders_ok:
+            errors.append("open orders are not synchronized with api")
+
+        positions_ok = True
+        if (
+            self.position_reconciliation_service is None
+            or self.config.app.data_source_mode != DataSourceMode.API
+        ):
+            positions_ok = False
+            checks.append(
+                {
+                    "name": "position_reconciliation",
+                    "ok": False,
+                    "message": "position reconciliation is unavailable",
+                }
+            )
+            errors.append("position reconciliation is unavailable")
+        else:
+            for symbol in (symbol.code for symbol in self.config.symbols if symbol.enabled):
+                try:
+                    self.position_reconciliation_service.reconcile(
+                        symbol=symbol,
+                        internal_position=self.trading_process.get_state(symbol).position,
+                    )
+                except Exception as error:
+                    positions_ok = False
+                    message = f"position reconciliation failed: {error}"
+                    checks.append(
+                        {
+                            "name": "position_reconciliation",
+                            "ok": False,
+                            "message": message,
+                        }
+                    )
+                    errors.append(message)
+                    break
+            else:
+                checks.append(
+                    {
+                        "name": "position_reconciliation",
+                        "ok": True,
+                        "message": "ok",
+                    }
+                )
+
+        try:
+            _ensure_live_order_allowed(self.config)
+            order_safety_ok = True
+            order_safety_message = "ok"
+        except Exception as error:
+            order_safety_ok = False
+            order_safety_message = str(error)
+            errors.append(order_safety_message)
+        checks.append(
+            {
+                "name": "order_safety",
+                "ok": order_safety_ok,
+                "message": order_safety_message,
+            }
+        )
+        checks.append(
+            {
+                "name": "trading_configuration",
+                "ok": order_safety_ok,
+                "message": f"trading_mode={self.config.app.trading_mode.value} kabu_api_environment={self.config.app.kabu_api.environment.value}",
+            }
+        )
+
+        halt_state = self.get_trading_halt_state()
+        return {
+            "ok": all(check["ok"] for check in checks),
+            "is_halted": halt_state.is_halted,
+            "reason": halt_state.reason.value if halt_state.reason is not None else "",
+            "message": halt_state.message,
+            "checks": checks,
+            "errors": errors,
+        }
 
 
 def initialize_application(
@@ -729,19 +897,15 @@ def _build_risk_manager(config: SystemConfig) -> RiskManager:
     )
 
 
-def main() -> int:
-    """設定読込・検証・基盤初期化を実行する。
+def main(argv: list[str] | None = None) -> int:
+    """設定読込・検証・基盤初期化または運用コマンドを実行する。"""
 
-    Args:
-        なし。
-
-    Returns:
-        終了コード。
-    """
-
+    arguments = list(sys.argv[1:] if argv is None else argv)
     try:
         config = load_config(CONFIG_DIR)
         logger = setup_logger(config.app.log_level, process_name=EventSource.MAIN.value)
+        if arguments:
+            return _run_operational_command(arguments, config=config, logger=logger)
         initialize_application(block_api=True)
     except KeyboardInterrupt:
         logger.info("application interrupted")
@@ -755,6 +919,164 @@ def main() -> int:
         logger.exception("application initialization failed")
         return 1
     return 0
+
+
+def _run_operational_command(
+    arguments: list[str],
+    config: SystemConfig,
+    logger: logging.Logger,
+) -> int:
+    """運用コマンドを実行する。"""
+
+    command = arguments[0]
+    if command not in {"halt-status", "halt", "resume", "preflight-check"}:
+        raise ValueError(f"unsupported command: {command}")
+    json_output = "--json" in arguments
+    runtime = build_application_runtime(config=config)
+    runtime.restore_snapshot_state()
+
+    if command == "halt-status":
+        payload = _halt_state_payload(runtime.get_trading_halt_state())
+        _log_operational_command(
+            logger=logger,
+            command=command,
+            result="ok",
+            reason=payload["reason"],
+            message=payload["message"],
+        )
+        _write_cli_output(payload, json_output=json_output)
+        return 0
+
+    if command == "halt":
+        reason = _parse_halt_reason(arguments)
+        message = _parse_option(arguments, "--message") or ""
+        payload = _halt_state_payload(
+            runtime.halt_trading_manually(reason=reason, message=message)
+        )
+        runtime.save_snapshot_now()
+        _log_operational_command(
+            logger=logger,
+            command=command,
+            result="ok",
+            reason=payload["reason"],
+            message=payload["message"],
+        )
+        _write_cli_output(payload, json_output=json_output)
+        return 0
+
+    if command == "resume":
+        ok = runtime.resume_trading()
+        runtime.save_snapshot_now()
+        payload = _halt_state_payload(runtime.get_trading_halt_state())
+        payload["ok"] = ok
+        _log_operational_command(
+            logger=logger,
+            command=command,
+            result="ok" if ok else "ng",
+            reason=payload["reason"],
+            message=payload["message"],
+        )
+        _write_cli_output(payload, json_output=json_output)
+        return 0 if ok else 1
+
+    payload = runtime.run_preflight_check()
+    _log_operational_command(
+        logger=logger,
+        command=command,
+        result="ok" if payload["ok"] else "ng",
+        reason=payload["reason"],
+        message=payload["message"],
+    )
+    _write_cli_output(payload, json_output=json_output)
+    return 0 if payload["ok"] else 1
+
+
+def _parse_halt_reason(arguments: list[str]) -> TradingHaltReason:
+    """halt コマンドの停止理由を解釈する。"""
+
+    value = _parse_option(arguments, "--reason")
+    if value is None:
+        return TradingHaltReason.MANUAL
+    return TradingHaltReason(value.lower())
+
+
+def _parse_option(arguments: list[str], name: str) -> str | None:
+    """単純なオプション値を取得する。"""
+
+    if name not in arguments:
+        return None
+    index = arguments.index(name)
+    if index + 1 >= len(arguments):
+        raise ValueError(f"missing option value: {name}")
+    return arguments[index + 1]
+
+
+def _halt_state_payload(halt_state: TradingHaltState) -> dict[str, Any]:
+    """停止状態を出力用辞書へ変換する。"""
+
+    return {
+        "ok": True,
+        "is_halted": halt_state.is_halted,
+        "reason": halt_state.reason.value if halt_state.reason is not None else "",
+        "message": halt_state.message,
+        "halted_at": (
+            halt_state.halted_at.isoformat() if halt_state.halted_at is not None else ""
+        ),
+        "resolved_at": (
+            halt_state.resolved_at.isoformat()
+            if halt_state.resolved_at is not None
+            else ""
+        ),
+        "requires_manual_resume": halt_state.requires_manual_resume,
+        "checks": [],
+        "errors": [],
+    }
+
+
+def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
+    """CLI 出力を標準出力へ書き出す。"""
+
+    if json_output:
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False))
+        sys.stdout.write("\n")
+        return
+    sys.stdout.write(f"ok: {payload['ok']}\n")
+    sys.stdout.write(f"is_halted: {payload['is_halted']}\n")
+    sys.stdout.write(f"reason: {payload['reason']}\n")
+    sys.stdout.write(f"message: {payload['message']}\n")
+    sys.stdout.write(f"halted_at: {payload.get('halted_at', '')}\n")
+    sys.stdout.write(f"resolved_at: {payload.get('resolved_at', '')}\n")
+    sys.stdout.write(
+        f"requires_manual_resume: {payload.get('requires_manual_resume', False)}\n"
+    )
+    if payload.get("checks"):
+        sys.stdout.write("checks:\n")
+        for check in payload["checks"]:
+            sys.stdout.write(
+                f"  - {check['name']}: {'OK' if check['ok'] else 'NG'} {check['message']}\n"
+            )
+    if payload.get("errors"):
+        sys.stdout.write("errors:\n")
+        for error in payload["errors"]:
+            sys.stdout.write(f"  - {error}\n")
+
+
+def _log_operational_command(
+    logger: logging.Logger,
+    command: str,
+    result: str,
+    reason: str,
+    message: str,
+) -> None:
+    """運用コマンド実行結果をログ出力する。"""
+
+    logger.info(
+        "operational command command=%s result=%s reason=%s message=%s",
+        command,
+        result,
+        reason,
+        message,
+    )
 
 
 if __name__ == "__main__":

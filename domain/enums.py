@@ -32,6 +32,7 @@ class KabuApiEnvironment(str, Enum):
 class TradingHaltReason(str, Enum):
     """取引停止の理由を表す。"""
 
+    MANUAL = "manual"
     API_ERROR_LIMIT = "api_error_limit"
     DRAWDOWN = "drawdown"
     MAX_DAILY_LOSS = "max_daily_loss"
