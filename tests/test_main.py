@@ -8,6 +8,9 @@ from domain.enums import OrderSide, OrderStatus, TradingHaltReason
 from domain.models import Order, Position, TradingHaltState
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError
+from infrastructure.repositories.operational_snapshot_store import (
+    OperationalSnapshotStore,
+)
 
 
 class FakeLogger:
@@ -458,7 +461,7 @@ def _save_halt_state(
     config,
     halt_state: TradingHaltState,
 ) -> None:
-    store = app_main.OperationalSnapshotStore(
+    store = OperationalSnapshotStore(
         config=config,
         storage=app_main.FileStorage(),
         clock=app_main.RealClock(),
@@ -471,7 +474,7 @@ def _save_halt_state(
 
 
 def _load_halt_state(config) -> TradingHaltState:
-    store = app_main.OperationalSnapshotStore(
+    store = OperationalSnapshotStore(
         config=config,
         storage=app_main.FileStorage(),
         clock=app_main.RealClock(),
