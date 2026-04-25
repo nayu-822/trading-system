@@ -186,6 +186,8 @@ def _build_app_config(data: dict[str, Any]) -> AppConfig:
         log_level=str(data["log_level"]).upper(),
         rest_poll_interval_sec=int(data["rest_poll_interval_sec"]),
         push_enabled=bool(data["push_enabled"]),
+        max_order_quantity=int(data.get("max_order_quantity", 1)),
+        trade_symbols=tuple(str(symbol) for symbol in data.get("trade_symbols", [])),
         kabu_api=KabuApiConfig(
             environment=environment,
             base_url=base_url,

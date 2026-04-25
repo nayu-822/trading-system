@@ -11,7 +11,14 @@ import pytest
 from data_source.kabu_api_client import KabuApiClient, KabuApiError
 from data_source.push_client import PushClient
 from data_source.rest_poller import RestPoller
-from domain.enums import DataSourceMode, EventSource, EventType, OrderSide, OrderStatus
+from domain.enums import (
+    DataSourceMode,
+    EventSource,
+    EventType,
+    KabuApiEnvironment,
+    OrderSide,
+    OrderStatus,
+)
 from domain.events import (
     BaseEvent,
     EventFactory,
@@ -64,8 +71,8 @@ def test_kabu_api_client_gets_token_and_orders(monkeypatch) -> None:
 
     assert token == "token-1"
     assert calls == [
-        ("POST", "http://localhost:18080/kabusapi/token"),
-        ("GET", "http://localhost:18080/kabusapi/orders"),
+        ("POST", "http://localhost:18081/kabusapi/token"),
+        ("GET", "http://localhost:18081/kabusapi/orders"),
     ]
     assert orders[0].order_id == "order-1"
     assert orders[0].status == OrderStatus.FILLED
@@ -125,7 +132,7 @@ def test_kabu_api_client_sends_order_and_returns_result() -> None:
     )
 
     assert calls[0][0] == "POST"
-    assert calls[0][1] == "http://localhost:18080/kabusapi/sendorder"
+    assert calls[0][1] == "http://localhost:18081/kabusapi/sendorder"
     assert calls[0][2]["X-API-KEY"] == "token-1"
     assert calls[0][3]["Symbol"] == "7203"
     assert calls[0][3]["Side"] == "BUY"
@@ -320,8 +327,9 @@ def test_external_data_process_syncs_orders_once() -> None:
 
 def _api_config() -> KabuApiConfig:
     return KabuApiConfig(
-        base_url="http://localhost:18080/kabusapi",
-        push_url="ws://localhost:18080/kabusapi/websocket",
+        environment=KabuApiEnvironment.PAPER,
+        base_url="http://localhost:18081/kabusapi",
+        push_url="ws://localhost:18081/kabusapi/websocket",
         timeout_sec=5,
         token_env_name="KABU_API_PASSWORD",
     )

@@ -1,4 +1,6 @@
 .pytest_cache/
+pytest-cache/
+tests/.tmp_*/
 __pycache__/
 *.py[cod]
 .env

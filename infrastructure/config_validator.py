@@ -51,6 +51,12 @@ def _validate_app_config(config: SystemConfig) -> None:
         )
     if config.app.rest_poll_interval_sec <= 0:
         raise ConfigValidationError("rest_poll_interval_sec は1以上で指定してください")
+    if config.app.max_order_quantity < 1:
+        raise ConfigValidationError("max_order_quantity は1以上で指定してください")
+    if not config.app.trade_symbols:
+        raise ConfigValidationError("trade_symbols は1件以上指定してください")
+    if any(not symbol for symbol in config.app.trade_symbols):
+        raise ConfigValidationError("trade_symbols に空文字は指定できません")
     if config.app.kabu_api.timeout_sec < 1:
         raise ConfigValidationError("api_timeout_sec は1以上で指定してください")
     if not config.app.kabu_api.base_url:

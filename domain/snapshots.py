@@ -59,6 +59,7 @@ class OrderSnapshot:
     filled_quantity: int
     remaining_quantity: int
     avg_price: float | None
+    is_exit: bool = False
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,7 @@ def _order_snapshot_from_dict(data: Mapping[str, Any]) -> OrderSnapshot:
         side=OrderSide(str(data["side"])),
         quantity=int(data["quantity"]),
         order_type=str(data["order_type"]),
+        is_exit=bool(data.get("is_exit", False)),
         status=OrderStatus(str(data["status"])),
         price=float(data["price"]) if data.get("price") is not None else None,
         filled_quantity=int(data["filled_quantity"]),

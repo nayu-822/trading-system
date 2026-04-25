@@ -6,6 +6,7 @@ from data_source.kabu_api_client import KabuApiClient
 from domain.enums import EventSource, EventType
 from domain.events import EventFactory, OrderStatusPayload, OrderStatusUpdated
 from domain.models import KabuOrderRequest, Order
+from trading.order_safety_validator import OrderSafetyValidator
 
 
 @dataclass
@@ -15,6 +16,7 @@ class LiveOrderGateway:
     api_client: KabuApiClient
     token: str
     allowed_symbols: tuple[str, ...]
+    safety_validator: OrderSafetyValidator | None = None
     event_factory: EventFactory = field(
         default_factory=lambda: EventFactory(source=EventSource.TRADING)
     )
@@ -28,6 +30,8 @@ class LiveOrderGateway:
         """注文を API へ送信し、受付状態イベントへ変換する。"""
 
         self._validate_order(order)
+        if self.safety_validator is not None:
+            self.safety_validator.validate_order(order)
         self.logger.info(
             "LIVE MODE order request gateway=LiveOrderGateway order_id=%s symbol=%s side=%s quantity=%s order_type=%s",
             order.order_id,

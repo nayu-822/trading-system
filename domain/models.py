@@ -85,6 +85,7 @@ class Order:
     side: OrderSide
     quantity: int
     order_type: str
+    is_exit: bool = False
     external_order_id: str | None = None
     status: OrderStatus = OrderStatus.NEW
     price: float | None = None
@@ -183,6 +184,8 @@ class AppConfig:
     log_level: str
     rest_poll_interval_sec: int
     push_enabled: bool
+    max_order_quantity: int
+    trade_symbols: tuple[str, ...]
     kabu_api: KabuApiConfig
     snapshot_enabled: bool
     snapshot_dir: str

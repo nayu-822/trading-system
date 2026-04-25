@@ -1,5 +1,10 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:venv",
     "python.defaultInterpreterPath": "${workspaceFolder}/../../python/trading-system/Scripts/python.exe",
-    "python.terminal.activateEnvironment": true
+    "python.terminal.activateEnvironment": true,
+    "python.testing.pytestArgs": [
+        "."
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
 }

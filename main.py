@@ -36,6 +36,7 @@ from processes.trading_process import TradingProcess
 from trading.live_order_gateway import LiveOrderGateway
 from trading.mock_order_gateway import MockOrderGateway
 from trading.order_gateway import OrderGateway
+from trading.order_safety_validator import OrderSafetyState, OrderSafetyValidator
 from trading.risk_manager import RiskManager
 
 CONFIG_DIR = Path("config")
@@ -256,8 +257,12 @@ def build_application_runtime(
             for symbol in config.symbols
             if symbol.enabled
         ),
-        order_gateway=_build_order_gateway(config=config, logger=logger),
         risk_manager=_build_risk_manager(config=config),
+    )
+    trading_process.order_gateway = _build_order_gateway(
+        config=config,
+        logger=logger,
+        trading_process=trading_process,
     )
     persistence_process = PersistenceProcess(
         event_bus=event_bus,
@@ -318,7 +323,11 @@ def _build_external_data_process(
     )
 
 
-def _build_order_gateway(config: SystemConfig, logger: logging.Logger) -> OrderGateway:
+def _build_order_gateway(
+    config: SystemConfig,
+    logger: logging.Logger,
+    trading_process: TradingProcess | None = None,
+) -> OrderGateway:
     if config.app.trading_mode == TradingMode.PAPER:
         return MockOrderGateway()
     if config.app.trading_mode == TradingMode.LIVE:
@@ -336,8 +345,32 @@ def _build_order_gateway(config: SystemConfig, logger: logging.Logger) -> OrderG
             api_client=api_client,
             token=token,
             allowed_symbols=enabled_symbols,
+            safety_validator=OrderSafetyValidator(
+                trading_mode=config.app.trading_mode,
+                kabu_api_environment=config.app.kabu_api.environment,
+                max_order_quantity=config.app.max_order_quantity,
+                trade_symbols=config.app.trade_symbols,
+                enabled_symbols=enabled_symbols,
+                state_provider=_build_order_safety_state_provider(trading_process),
+                logger=logger,
+            ),
         )
     raise ValueError(f"unsupported trading_mode={config.app.trading_mode.value}")
+
+
+def _build_order_safety_state_provider(
+    trading_process: TradingProcess | None,
+):
+    def provide(symbol: str) -> OrderSafetyState:
+        if trading_process is None:
+            raise ValueError("trading_process is not configured")
+        state = trading_process.get_state(symbol)
+        return OrderSafetyState(
+            position=state.position,
+            open_orders=tuple(state.orders),
+        )
+
+    return provide
 
 
 def _ensure_live_order_allowed(config: SystemConfig) -> None:

@@ -174,6 +174,7 @@ class TradingProcess:
             side=order_side,
             quantity=quantity,
             order_type=self.order_type,
+            is_exit=event.payload.signal_type == SignalType.EXIT,
             status=OrderStatus.REQUESTED,
             remaining_quantity=quantity,
         )
@@ -361,6 +362,7 @@ class TradingProcess:
                         side=order.side,
                         quantity=order.quantity,
                         order_type=order.order_type,
+                        is_exit=order.is_exit,
                         status=order.status,
                         price=order.price,
                         filled_quantity=order.filled_quantity,
@@ -414,6 +416,7 @@ class TradingProcess:
                     side=order.side,
                     quantity=order.quantity,
                     order_type=order.order_type,
+                    is_exit=order.is_exit,
                     status=order.status,
                     price=order.price,
                     filled_quantity=order.filled_quantity,

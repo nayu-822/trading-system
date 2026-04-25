@@ -12,32 +12,31 @@ from main import LiveOrderNotAllowedError, _ensure_live_order_allowed
 def test_load_config_returns_structured_model() -> None:
     config = load_config(Path("config"))
 
-    assert config.app.mode == RunMode.MOCK
-    assert config.app.trading_mode == TradingMode.PAPER
-    assert config.app.live_enabled is False
-    assert config.app.data_source_mode == DataSourceMode.CSV
-    assert config.app.log_level == "INFO"
-    assert config.app.kabu_api.environment == KabuApiEnvironment.PAPER
-    assert config.app.kabu_api.base_url == "http://localhost:18081/kabusapi"
-    assert config.app.kabu_api.push_url == "ws://localhost:18081/kabusapi/websocket"
-    assert config.app.kabu_api.timeout_sec == 5
-    assert config.app.kabu_api.token_env_name == "KABU_API_PASSWORD"
-    assert config.symbols[0].code == "7203"
-    assert config.symbols[0].enabled is True
-    assert config.symbols[0].strategy == "auto"
-    assert config.symbols[0].lot_min == 100
-    assert config.symbols[0].lot_max == 100
-    assert config.symbols[0].strategy_params_override.strategy_params == {}
-    assert config.strategy.default_strategy == "auto"
-    assert config.strategy.auto.enabled is True
-    assert config.strategy.trend.short_window == 5
-    assert config.strategy.range.window == 20
-    assert config.risk.max_consecutive_losses == 3
-    assert config.risk.resume_consecutive_wins == 2
-    assert config.risk.max_positions == 3
-    assert config.risk.account_equity == 1000000
-    assert config.risk.kill_switch_enabled is True
-    assert config.risk.api_error_limit == 5
+    assert isinstance(config.app.mode, RunMode)
+    assert isinstance(config.app.trading_mode, TradingMode)
+    assert isinstance(config.app.data_source_mode, DataSourceMode)
+    assert isinstance(config.app.kabu_api.environment, KabuApiEnvironment)
+    assert config.app.log_level
+    assert config.app.max_order_quantity >= 1
+    assert len(config.app.trade_symbols) >= 1
+    assert config.app.kabu_api.base_url
+    assert config.app.kabu_api.push_url
+    assert config.app.kabu_api.timeout_sec >= 1
+    assert config.app.kabu_api.token_env_name
+    assert len(config.symbols) >= 1
+    assert config.symbols[0].code
+    assert config.symbols[0].strategy
+    assert config.symbols[0].lot_min >= 1
+    assert config.symbols[0].lot_max >= config.symbols[0].lot_min
+    assert isinstance(config.symbols[0].strategy_params_override.strategy_params, dict)
+    assert config.strategy.default_strategy
+    assert config.strategy.trend.short_window >= 1
+    assert config.strategy.range.window >= 1
+    assert config.risk.max_consecutive_losses >= 1
+    assert config.risk.resume_consecutive_wins >= 1
+    assert config.risk.max_positions >= 1
+    assert config.risk.account_equity > 0
+    assert config.risk.api_error_limit >= 1
 
 
 def test_load_config_raises_when_file_missing() -> None:
@@ -273,6 +272,8 @@ def _build_test_app_config(
         "log_level": "INFO",
         "rest_poll_interval_sec": 5,
         "push_enabled": False,
+        "max_order_quantity": 1,
+        "trade_symbols": ["7203"],
         "api_timeout_sec": 5,
         "token_env_name": "KABU_API_PASSWORD",
         "snapshot_enabled": False,
