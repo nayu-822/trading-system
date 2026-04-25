@@ -1,7 +1,7 @@
 import logging
 import json
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Event
 from typing import Any
@@ -29,6 +29,7 @@ from domain.models import (
     TradingHaltState,
     TradingSymbolConfig,
 )
+from domain.snapshots import RiskControlSnapshot, TradingStateSnapshot
 from infrastructure.clock import RealClock
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
@@ -552,6 +553,126 @@ class ApplicationRuntime:
         }
 
 
+@dataclass
+class OperationalSnapshotStore:
+    """運用コマンド用に停止状態だけをスナップショットへ読み書きする。"""
+
+    config: SystemConfig
+    storage: FileStorage
+    clock: RealClock
+
+    def load_halt_state(self) -> TradingHaltState:
+        """停止状態をスナップショットから復元する。
+        Args:
+            なし
+        Returns:
+            TradingHaltState: 復元した取引停止状態。スナップショット未作成時は初期状態。
+        """
+
+        snapshot = self._load_snapshot()
+        if snapshot is None or snapshot.risk_state is None:
+            return TradingHaltState()
+        risk_state = snapshot.risk_state
+        return TradingHaltState(
+            is_halted=risk_state.kill_switch_active,
+            reason=risk_state.trading_halt_reason,
+            message=risk_state.trading_halt_message,
+            halted_at=risk_state.trading_halt_halted_at,
+            resolved_at=risk_state.trading_halt_resolved_at,
+            requires_manual_resume=risk_state.requires_manual_resume,
+        )
+
+    def save_halt_state(self, halt_state: TradingHaltState) -> None:
+        """停止状態をスナップショットへ保存する。
+        Args:
+            halt_state: 保存対象の取引停止状態。
+        Returns:
+            なし
+        """
+
+        timestamp = self.clock.now()
+        snapshot = self._load_snapshot()
+        if snapshot is None:
+            snapshot = self._create_empty_snapshot(timestamp)
+        risk_state = snapshot.risk_state or self._create_empty_risk_state()
+        updated_snapshot = replace(
+            snapshot,
+            updated_at=timestamp,
+            sequence_no=snapshot.sequence_no + 1,
+            risk_state=replace(
+                risk_state,
+                kill_switch_active=halt_state.is_halted,
+                trading_halt_reason=halt_state.reason,
+                trading_halt_message=halt_state.message,
+                trading_halt_halted_at=halt_state.halted_at,
+                trading_halt_resolved_at=halt_state.resolved_at,
+                requires_manual_resume=halt_state.requires_manual_resume,
+            ),
+        )
+        self.storage.overwrite_json(self.snapshot_path, updated_snapshot.to_dict())
+
+    @property
+    def snapshot_path(self) -> Path:
+        """停止状態を保存するスナップショットパスを返す。
+        Args:
+            なし
+        Returns:
+            Path: 停止状態を含むスナップショットファイルパス。
+        """
+
+        return Path(self.config.app.snapshot_dir) / "trading_snapshot.json"
+
+    def _load_snapshot(self) -> TradingStateSnapshot | None:
+        """スナップショット全体を読み込む。
+        Args:
+            なし
+        Returns:
+            TradingStateSnapshot | None: 読み込んだスナップショット。未作成時は None。
+        """
+
+        snapshot_data = self.storage.read_json(self.snapshot_path)
+        if snapshot_data is None:
+            return None
+        return TradingStateSnapshot.from_dict(snapshot_data)
+
+    def _create_empty_snapshot(self, timestamp) -> TradingStateSnapshot:
+        """停止状態だけを保存できる空スナップショットを生成する。
+        Args:
+            timestamp: スナップショット作成時刻。
+        Returns:
+            TradingStateSnapshot: 初期化済みの空スナップショット。
+        """
+
+        return TradingStateSnapshot(
+            version=1,
+            created_at=timestamp,
+            updated_at=timestamp,
+            sequence_no=0,
+            symbols=(),
+            risk_state=self._create_empty_risk_state(),
+        )
+
+    def _create_empty_risk_state(self) -> RiskControlSnapshot:
+        """停止状態保存用の初期リスク状態を生成する。
+        Args:
+            なし
+        Returns:
+            RiskControlSnapshot: 初期化済みのリスク状態。
+        """
+
+        return RiskControlSnapshot(
+            consecutive_losses=0,
+            consecutive_wins=0,
+            max_equity=0.0,
+            current_equity=0.0,
+            kill_switch_active=False,
+            stopped_by_losses=False,
+            daily_realized_loss=0.0,
+            api_error_count=0,
+            business_date=None,
+        )
+
+
 def initialize_application(
     config_dir: Path = CONFIG_DIR,
     csv_path: Path | None = None,
@@ -932,11 +1053,14 @@ def _run_operational_command(
     if command not in {"halt-status", "halt", "resume", "preflight-check"}:
         raise ValueError(f"unsupported command: {command}")
     json_output = "--json" in arguments
-    runtime = build_application_runtime(config=config)
-    runtime.restore_snapshot_state()
+    snapshot_store = OperationalSnapshotStore(
+        config=config,
+        storage=FileStorage(),
+        clock=RealClock(),
+    )
 
     if command == "halt-status":
-        payload = _halt_state_payload(runtime.get_trading_halt_state())
+        payload = _halt_state_payload(snapshot_store.load_halt_state())
         _log_operational_command(
             logger=logger,
             command=command,
@@ -950,10 +1074,16 @@ def _run_operational_command(
     if command == "halt":
         reason = _parse_halt_reason(arguments)
         message = _parse_option(arguments, "--message") or ""
-        payload = _halt_state_payload(
-            runtime.halt_trading_manually(reason=reason, message=message)
+        halt_state = TradingHaltState(
+            is_halted=True,
+            reason=reason,
+            message=message,
+            halted_at=snapshot_store.clock.now(),
+            resolved_at=None,
+            requires_manual_resume=True,
         )
-        runtime.save_snapshot_now()
+        snapshot_store.save_halt_state(halt_state)
+        payload = _halt_state_payload(snapshot_store.load_halt_state())
         _log_operational_command(
             logger=logger,
             command=command,
@@ -963,6 +1093,24 @@ def _run_operational_command(
         )
         _write_cli_output(payload, json_output=json_output)
         return 0
+
+    try:
+        runtime = build_application_runtime(config=config)
+    except Exception as error:
+        payload = _error_payload(
+            message=f"runtime initialization failed: {error}",
+            halt_state=snapshot_store.load_halt_state(),
+        )
+        _log_operational_command(
+            logger=logger,
+            command=command,
+            result="ng",
+            reason=payload["reason"],
+            message=payload["message"],
+        )
+        _write_cli_output(payload, json_output=json_output)
+        return 1
+    runtime.restore_snapshot_state()
 
     if command == "resume":
         ok = runtime.resume_trading()
@@ -1031,6 +1179,25 @@ def _halt_state_payload(halt_state: TradingHaltState) -> dict[str, Any]:
         "checks": [],
         "errors": [],
     }
+
+
+def _error_payload(
+    message: str,
+    halt_state: TradingHaltState | None = None,
+) -> dict[str, Any]:
+    """CLI 異常終了時の出力形式を生成する。
+    Args:
+        message: 利用者へ返すエラー理由。
+        halt_state: 併せて返す取引停止状態。未指定時は初期状態。
+    Returns:
+        dict[str, Any]: CLI 出力用のエラーペイロード。
+    """
+
+    payload = _halt_state_payload(halt_state or TradingHaltState())
+    payload["ok"] = False
+    payload["message"] = message
+    payload["errors"] = [message]
+    return payload
 
 
 def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:

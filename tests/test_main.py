@@ -1,4 +1,5 @@
 import io
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -135,21 +136,37 @@ def test_build_order_safety_state_provider_rejects_when_trading_is_halted() -> N
 
 
 def test_main_halt_status_outputs_current_state(monkeypatch) -> None:
-    config = load_config(Path("config"))
+    config = replace(
+        load_config(Path("config")),
+        app=replace(
+            load_config(Path("config")).app,
+            snapshot_dir="tests/.tmp_main_cli/halt_status",
+        ),
+    )
     fake_logger = FakeLogger()
-    fake_runtime = _FakeRuntime(
+    _save_halt_state(
+        config=config,
         halt_state=TradingHaltState(
             is_halted=True,
             reason=TradingHaltReason.POSITION_MISMATCH,
             message="position mismatch detected",
             halted_at=_timestamp(),
             requires_manual_resume=True,
-        )
+        ),
     )
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
     monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
-    monkeypatch.setattr(app_main, "build_application_runtime", lambda config: fake_runtime)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config: (_ for _ in ()).throw(AssertionError("runtime should not be built")),
+    )
+    monkeypatch.setattr(
+        app_main.KabuApiClient,
+        "get_token",
+        lambda self: (_ for _ in ()).throw(AssertionError("token should not be fetched")),
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(["halt-status"])
@@ -160,13 +177,27 @@ def test_main_halt_status_outputs_current_state(monkeypatch) -> None:
 
 
 def test_main_halt_sets_manual_halt_and_saves_snapshot(monkeypatch) -> None:
-    config = load_config(Path("config"))
+    config = replace(
+        load_config(Path("config")),
+        app=replace(
+            load_config(Path("config")).app,
+            snapshot_dir="tests/.tmp_main_cli/halt_manual",
+        ),
+    )
     fake_logger = FakeLogger()
-    fake_runtime = _FakeRuntime(halt_state=TradingHaltState())
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
     monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
-    monkeypatch.setattr(app_main, "build_application_runtime", lambda config: fake_runtime)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config: (_ for _ in ()).throw(AssertionError("runtime should not be built")),
+    )
+    monkeypatch.setattr(
+        app_main.KabuApiClient,
+        "get_token",
+        lambda self: (_ for _ in ()).throw(AssertionError("token should not be fetched")),
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(
@@ -174,8 +205,11 @@ def test_main_halt_sets_manual_halt_and_saves_snapshot(monkeypatch) -> None:
     )
 
     assert exit_code == 0
-    assert fake_runtime.halt_calls == [(TradingHaltReason.MANUAL, "manual maintenance")]
-    assert fake_runtime.save_snapshot_calls == 1
+    halt_state = _load_halt_state(config)
+    assert halt_state.is_halted is True
+    assert halt_state.reason == TradingHaltReason.MANUAL
+    assert halt_state.message == "manual maintenance"
+    assert halt_state.requires_manual_resume is True
 
 
 def test_main_resume_success_saves_snapshot(monkeypatch) -> None:
@@ -264,21 +298,32 @@ def test_main_preflight_check_does_not_change_state(monkeypatch) -> None:
 
 
 def test_main_halt_status_outputs_json(monkeypatch) -> None:
-    config = load_config(Path("config"))
+    config = replace(
+        load_config(Path("config")),
+        app=replace(
+            load_config(Path("config")).app,
+            snapshot_dir="tests/.tmp_main_cli/halt_status_json",
+        ),
+    )
     fake_logger = FakeLogger()
-    fake_runtime = _FakeRuntime(
+    _save_halt_state(
+        config=config,
         halt_state=TradingHaltState(
             is_halted=True,
             reason=TradingHaltReason.MANUAL,
             message="manual maintenance",
             halted_at=_timestamp(),
             requires_manual_resume=True,
-        )
+        ),
     )
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
     monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
-    monkeypatch.setattr(app_main, "build_application_runtime", lambda config: fake_runtime)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config: (_ for _ in ()).throw(AssertionError("runtime should not be built")),
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(["halt-status", "--json"])
@@ -286,6 +331,68 @@ def test_main_halt_status_outputs_json(monkeypatch) -> None:
     assert exit_code == 0
     assert '"is_halted": true' in output.getvalue()
     assert '"reason": "manual"' in output.getvalue()
+
+
+def test_main_resume_returns_error_when_runtime_initialization_fails(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config: (_ for _ in ()).throw(RuntimeError("api init failed")),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["resume"])
+
+    assert exit_code == 1
+    assert "api init failed" in output.getvalue()
+
+
+def test_main_preflight_check_returns_error_when_runtime_initialization_fails(
+    monkeypatch,
+) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config: (_ for _ in ()).throw(RuntimeError("api init failed")),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["preflight-check"])
+
+    assert exit_code == 1
+    assert "api init failed" in output.getvalue()
+
+
+def test_main_preflight_check_outputs_json_when_runtime_initialization_fails(
+    monkeypatch,
+) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config: (_ for _ in ()).throw(RuntimeError("api init failed")),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["preflight-check", "--json"])
+
+    assert exit_code == 1
+    assert '"ok": false' in output.getvalue()
+    assert '"runtime initialization failed: api init failed"' in output.getvalue()
 
 
 class _FakeRuntime:
@@ -345,3 +452,28 @@ class _FakeRuntime:
 
 def _timestamp() -> datetime:
     return datetime(2026, 4, 25, tzinfo=timezone.utc)
+
+
+def _save_halt_state(
+    config,
+    halt_state: TradingHaltState,
+) -> None:
+    store = app_main.OperationalSnapshotStore(
+        config=config,
+        storage=app_main.FileStorage(),
+        clock=app_main.RealClock(),
+    )
+    if store.snapshot_path.parent.exists():
+        for path in store.snapshot_path.parent.iterdir():
+            if path.is_file():
+                path.unlink()
+    store.save_halt_state(halt_state)
+
+
+def _load_halt_state(config) -> TradingHaltState:
+    store = app_main.OperationalSnapshotStore(
+        config=config,
+        storage=app_main.FileStorage(),
+        clock=app_main.RealClock(),
+    )
+    return store.load_halt_state()
