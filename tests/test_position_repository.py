@@ -101,7 +101,7 @@ def test_position_repository_refreshes_cache_after_ttl() -> None:
     assert api_client.call_count == 2
 
 
-def test_position_repository_ignores_symbol_mismatch() -> None:
+def test_position_repository_raises_when_symbol_mismatch() -> None:
     class FakeApiClient:
         def get_positions(self, token: str, symbol: str | None = None) -> tuple[Position, ...]:
             return (

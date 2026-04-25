@@ -66,6 +66,15 @@ class PositionRepository:
         return position
 
     def _get_cached_position(self, symbol: str) -> Position | None:
+        """キャッシュ済み建玉を取得する。
+
+        Args:
+            symbol: 取得対象の銘柄コード。
+
+        Returns:
+            Position | None: 有効なキャッシュがある場合は建玉、ない場合は None。
+        """
+
         cached = self._cache.get(symbol)
         if cached is None:
             return None
@@ -76,6 +85,16 @@ class PositionRepository:
         return position
 
     def _log_position(self, position: Position, source: str) -> None:
+        """取得した建玉情報をログ出力する。
+
+        Args:
+            position: ログ出力対象の建玉。
+            source: 建玉の取得元。
+
+        Returns:
+            なし。
+        """
+
         side = _resolve_position_side(position)
         self.logger.info(
             "position fetched symbol=%s side=%s quantity=%s source=%s",
@@ -119,6 +138,15 @@ def _merge_positions(symbol: str, positions: tuple[Position, ...]) -> Position:
 
 
 def _resolve_position_side(position: Position) -> str:
+    """建玉数量から売買方向を解決する。
+
+    Args:
+        position: 判定対象の建玉。
+
+    Returns:
+        str: BUY / SELL / NONE のいずれか。
+    """
+
     if position.quantity > 0:
         return OrderSide.BUY.value
     if position.quantity < 0:
