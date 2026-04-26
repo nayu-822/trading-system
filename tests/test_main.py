@@ -1498,6 +1498,38 @@ def test_build_paper_api_result_file_path_sanitizes_unsafe_characters() -> None:
     assert "?" not in result_path.name
 
 
+def test_sanitize_executed_at_for_result_filename_supports_plus_timezone() -> None:
+    sanitized = app_main._sanitize_executed_at_for_result_filename(
+        "2026-04-26T12:34:56.123456+09:00"
+    )
+
+    assert sanitized == "20260426T123456123456"
+
+
+def test_sanitize_executed_at_for_result_filename_supports_minus_timezone() -> None:
+    sanitized = app_main._sanitize_executed_at_for_result_filename(
+        "2026-04-26T12:34:56.123456-05:00"
+    )
+
+    assert sanitized == "20260426T123456123456"
+
+
+def test_sanitize_executed_at_for_result_filename_supports_z_suffix() -> None:
+    sanitized = app_main._sanitize_executed_at_for_result_filename(
+        "2026-04-26T12:34:56.123456Z"
+    )
+
+    assert sanitized == "20260426T123456123456"
+
+
+def test_sanitize_executed_at_for_result_filename_keeps_fractional_seconds() -> None:
+    sanitized = app_main._sanitize_executed_at_for_result_filename(
+        "2026-04-26T12:34:56.654321+09:00"
+    )
+
+    assert sanitized.endswith("654321")
+
+
 def test_operation_guide_mentions_api_order_dry_run_follow_up_steps() -> None:
     guide = Path("docs/operation_guide.md").read_text(encoding="utf-8")
 

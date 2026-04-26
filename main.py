@@ -2351,9 +2351,14 @@ def _sanitize_executed_at_for_result_filename(executed_at: str) -> str:
     if not executed_at:
         return datetime.now().strftime("%Y%m%dT%H%M%S%f")
     normalized = executed_at
-    timezone_split_index = max(normalized.find("+"), normalized.find("-"))
-    if "T" in normalized and timezone_split_index > normalized.find("T"):
-        normalized = normalized[:timezone_split_index]
+    time_separator_index = normalized.find("T")
+    if time_separator_index >= 0:
+        time_part = normalized[time_separator_index + 1 :]
+        timezone_offset_index = time_part.find("+")
+        if timezone_offset_index < 0:
+            timezone_offset_index = time_part.find("-")
+        if timezone_offset_index >= 0:
+            normalized = normalized[: time_separator_index + 1 + timezone_offset_index]
     normalized = normalized.replace("Z", "")
     return (
         normalized.replace("-", "")
