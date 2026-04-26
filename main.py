@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from threading import Event
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from data_source.csv_loader import CsvMarketDataLoader
@@ -1809,12 +1810,26 @@ def _run_operational_command(
         "halt",
         "resume",
         "preflight-check",
+        "config-summary",
         "api-order-precheck",
         "api-order-dry-run",
     }:
         raise ValueError(f"unsupported command: {command}")
     json_output = "--json" in arguments
     save_result = _result_save_requested(arguments)
+
+    if command == "config-summary":
+        payload = _config_summary_payload(config)
+        _log_operational_command(
+            logger=logger,
+            command=command,
+            result="ok" if payload["ok"] else "ng",
+            reason="",
+            message="config summary generated",
+        )
+        _write_cli_output(payload, json_output=json_output)
+        return 0 if payload["ok"] else 1
+
     snapshot_store = OperationalSnapshotStore(
         config=config,
         storage=FileStorage(),
@@ -2815,6 +2830,213 @@ def _is_paper_api_base_url(base_url: str) -> bool:
     return api_order_precheck_cli._is_paper_api_base_url(base_url)
 
 
+def _is_live_api_base_url(base_url: str) -> bool:
+    """本番 API 用 base_url かを判定する。
+
+    Args:
+        base_url: 判定対象 URL。
+
+    Returns:
+        bool: 18080 ポートを指していれば True。
+    """
+
+    parsed = urlparse(base_url)
+    if parsed.port is not None:
+        return parsed.port == 18080
+    return ":18080" in base_url
+
+
+def _resolve_config_summary_api_port(base_url: str) -> int | None:
+    """config-summary 用に解決済み API ポートを返す。
+
+    Args:
+        base_url: 判定対象の API URL。
+
+    Returns:
+        int | None: URL から解決できたポート。解決できない場合は None。
+    """
+
+    parsed = urlparse(base_url)
+    try:
+        return parsed.port
+    except ValueError:
+        return None
+
+
+def _resolve_config_summary_environment_label(config: SystemConfig) -> str:
+    """現在設定の実行環境ラベルを返す。
+
+    Args:
+        config: 現在のシステム設定。
+
+    Returns:
+        str: `csv_paper`、`api_paper`、`api_live`、`mock`、`unknown` のいずれか。
+    """
+
+    if (
+        config.app.data_source_mode == DataSourceMode.CSV
+        and config.app.trading_mode == TradingMode.PAPER
+    ):
+        return "csv_paper"
+    if (
+        config.app.data_source_mode == DataSourceMode.API
+        and config.app.kabu_api.environment == KabuApiEnvironment.PAPER
+    ):
+        return "api_paper"
+    if (
+        config.app.data_source_mode == DataSourceMode.API
+        and config.app.kabu_api.environment == KabuApiEnvironment.LIVE
+    ):
+        return "api_live"
+    if config.app.mode.value == "mock":
+        return "mock"
+    return "unknown"
+
+
+def _resolve_config_summary_order_gateway_label(config: SystemConfig) -> str:
+    """現在設定から想定される注文Gateway名を返す。
+
+    Args:
+        config: 現在のシステム設定。
+
+    Returns:
+        str: 想定される注文Gateway名。
+    """
+
+    if config.app.trading_mode != TradingMode.LIVE or not config.app.live_enabled:
+        return MockOrderGateway.__name__
+    if config.app.data_source_mode == DataSourceMode.API:
+        return LiveOrderGateway.__name__
+    return "Unknown"
+
+
+def _resolve_config_summary_warnings(
+    config: SystemConfig,
+    token_env_exists: bool,
+) -> list[str]:
+    """config-summary 用の注意事項一覧を返す。
+
+    Args:
+        config: 現在のシステム設定。
+        token_env_exists: API パスワード環境変数の存在有無。
+
+    Returns:
+        list[str]: 注意事項一覧。
+    """
+
+    warnings: list[str] = []
+    if config.app.kabu_api.environment == KabuApiEnvironment.LIVE:
+        warnings.append(
+            "本番API 18080を向いています。実注文が市場に送信される可能性があります"
+        )
+    if not token_env_exists:
+        warnings.append(
+            f"token_env_name で指定された環境変数 {config.app.kabu_api.token_env_name} が未設定です"
+        )
+    if config.app.trading_mode == TradingMode.LIVE and not config.app.live_enabled:
+        warnings.append("trading_mode=live ですが live_enabled=false です")
+    if (
+        config.app.data_source_mode == DataSourceMode.API
+        and not token_env_exists
+    ):
+        warnings.append("API利用設定ですがAPIパスワード環境変数が未設定です")
+    if (
+        config.app.kabu_api.environment == KabuApiEnvironment.PAPER
+        and not _is_paper_api_base_url(config.app.kabu_api.base_url)
+    ):
+        warnings.append("paper設定ですがbase_urlが検証PORT 18081ではありません")
+    if (
+        config.app.kabu_api.environment == KabuApiEnvironment.LIVE
+        and not _is_live_api_base_url(config.app.kabu_api.base_url)
+    ):
+        warnings.append("live設定ですがbase_urlが本番PORT 18080ではありません")
+    return warnings
+
+
+def _resolve_config_summary_next_action(
+    config: SystemConfig,
+    token_env_exists: bool,
+    resolved_environment_label: str,
+    warnings: list[str],
+) -> list[str]:
+    """config-summary の次アクション一覧を返す。
+
+    Args:
+        config: 現在のシステム設定。
+        token_env_exists: API パスワード環境変数の存在有無。
+        resolved_environment_label: 解決済み環境ラベル。
+        warnings: 現在の注意事項一覧。
+
+    Returns:
+        list[str]: 次に実行すべきコマンドや確認事項。
+    """
+
+    if not token_env_exists:
+        return [
+            f'PowerShellで $env:{config.app.kabu_api.token_env_name}="APIパスワード" を設定してください'
+        ]
+    if resolved_environment_label == "api_paper" and not warnings:
+        return [
+            "python main.py api-order-precheck --symbol 1321 --quantity 1 を実行してください"
+        ]
+    if resolved_environment_label == "api_live":
+        return [
+            "本番API設定です。python main.py halt-status を実行してください",
+            "python main.py preflight-check を実行し、docs/operation_guide.md を確認してください",
+        ]
+    if resolved_environment_label == "csv_paper":
+        return [
+            "CSVローカル確認用の設定です。API検証を行う場合は docs/operation_guide.md のpaper検証API設定を確認してください"
+        ]
+    return ["docs/operation_guide.md を確認して設定内容を見直してください"]
+
+
+def _config_summary_payload(config: SystemConfig) -> dict[str, Any]:
+    """現在設定の解釈結果を config-summary 用 payload にまとめる。
+
+    Args:
+        config: 現在のシステム設定。
+
+    Returns:
+        dict[str, Any]: config-summary 出力用 payload。
+    """
+
+    token_env_exists = bool(os.environ.get(config.app.kabu_api.token_env_name, ""))
+    resolved_environment_label = _resolve_config_summary_environment_label(config)
+    warnings = _resolve_config_summary_warnings(
+        config=config,
+        token_env_exists=token_env_exists,
+    )
+    payload = {
+        "command": "config-summary",
+        "ok": len(warnings) == 0,
+        "mode": config.app.mode.value,
+        "trading_mode": config.app.trading_mode.value,
+        "live_enabled": config.app.live_enabled,
+        "data_source_mode": config.app.data_source_mode.value,
+        "kabu_api_environment": config.app.kabu_api.environment.value,
+        "kabu_api_base_url": config.app.kabu_api.base_url,
+        "kabu_push_url": config.app.kabu_api.push_url,
+        "token_env_name": config.app.kabu_api.token_env_name,
+        "token_env_exists": token_env_exists,
+        "trade_symbols": list(config.app.trade_symbols),
+        "max_order_quantity": config.app.max_order_quantity,
+        "position_reconciliation_enabled": config.app.position_reconciliation_enabled,
+        "position_average_price_tolerance": config.app.position_average_price_tolerance,
+        "resolved_api_port": _resolve_config_summary_api_port(config.app.kabu_api.base_url),
+        "resolved_environment_label": resolved_environment_label,
+        "order_gateway_label": _resolve_config_summary_order_gateway_label(config),
+        "warnings": warnings,
+        "next_action": _resolve_config_summary_next_action(
+            config=config,
+            token_env_exists=token_env_exists,
+            resolved_environment_label=resolved_environment_label,
+            warnings=warnings,
+        ),
+    }
+    return payload
+
+
 def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
     """CLI 出力を標準出力へ書き出す。"""
 
@@ -2822,6 +3044,44 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
     if json_output:
         sys.stdout.write(json.dumps(payload, ensure_ascii=False))
         sys.stdout.write("\n")
+        return
+    if payload.get("command") == "config-summary":
+        sys.stdout.write(f"command: {payload['command']}\n")
+        sys.stdout.write(f"ok: {payload['ok']}\n")
+        sys.stdout.write(f"mode: {payload['mode']}\n")
+        sys.stdout.write(f"trading_mode: {payload['trading_mode']}\n")
+        sys.stdout.write(f"live_enabled: {payload['live_enabled']}\n")
+        sys.stdout.write(f"data_source_mode: {payload['data_source_mode']}\n")
+        sys.stdout.write(
+            f"kabu_api_environment: {payload['kabu_api_environment']}\n"
+        )
+        sys.stdout.write(f"kabu_api_base_url: {payload['kabu_api_base_url']}\n")
+        sys.stdout.write(f"kabu_push_url: {payload['kabu_push_url']}\n")
+        sys.stdout.write(f"token_env_name: {payload['token_env_name']}\n")
+        sys.stdout.write(f"token_env_exists: {payload['token_env_exists']}\n")
+        sys.stdout.write(f"trade_symbols: {payload['trade_symbols']}\n")
+        sys.stdout.write(f"max_order_quantity: {payload['max_order_quantity']}\n")
+        sys.stdout.write(
+            "position_reconciliation_enabled: "
+            f"{payload['position_reconciliation_enabled']}\n"
+        )
+        sys.stdout.write(
+            "position_average_price_tolerance: "
+            f"{payload['position_average_price_tolerance']}\n"
+        )
+        sys.stdout.write(f"resolved_api_port: {payload['resolved_api_port']}\n")
+        sys.stdout.write(
+            f"resolved_environment_label: {payload['resolved_environment_label']}\n"
+        )
+        sys.stdout.write(f"order_gateway_label: {payload['order_gateway_label']}\n")
+        if payload.get("warnings"):
+            sys.stdout.write("warnings:\n")
+            for warning in payload["warnings"]:
+                sys.stdout.write(f"  - {warning}\n")
+        if payload.get("next_action"):
+            sys.stdout.write("next_action:\n")
+            for action in payload["next_action"]:
+                sys.stdout.write(f"  - {action}\n")
         return
     if payload.get("command") == "api-order-precheck":
         sys.stdout.write(f"command: {payload['command']}\n")

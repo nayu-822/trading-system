@@ -129,6 +129,35 @@ API接続が必要なため失敗する可能性があるコマンド:
 - `python main.py preflight-check`
 - `python main.py resume`
 
+## config-summary
+
+`config-summary` は、現在の `config/app.yaml` が実行時にどう解釈されるかを確認するコマンドです。
+- API接続や注文は行いません
+- APIトークン取得、建玉取得、注文状態取得、WebSocket接続は行いません
+- `token_env_name` が指す環境変数の存在有無は確認しますが、APIパスワード値は表示しません
+- paper検証API実行前に、現在設定が `paper` / `live` / `csv` のどれを向いているかを確認する用途に向いています
+
+実行例:
+
+```bash
+python main.py config-summary
+python main.py config-summary --json
+```
+
+主な確認項目:
+
+- `trading_mode`
+- `kabu_api_environment`
+- `kabu_api_base_url`
+- `kabu_push_url`
+- `token_env_name`
+- `token_env_exists`
+- `resolved_api_port`
+- `resolved_environment_label`
+- `order_gateway_label`
+- `warnings`
+- `next_action`
+
 運用上の原則:
 
 - API障害中はまず `halt-status` で現在の停止状態を確認する

@@ -26,26 +26,32 @@ $env:KABU_API_PASSWORD_PAPER="検証用APIパスワード"
 実パスワードは Git にコミットしないでください。`.env` を使う場合も `.env` はコミットせず、`.env.sample` を参考にしてください。
 
 ### 実行順
-1. 事前確認
+1. 現在設定の確認
+
+```bash
+python main.py config-summary
+```
+
+2. 事前確認
 
 ```bash
 python main.py api-order-precheck --symbol 1321 --quantity 1
 ```
 
-2. 検証注文フロー確認
+3. 検証注文フロー確認
 
 ```bash
 python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1
 ```
 
-3. 結果保存あり
+4. 結果保存あり
 
 ```bash
 python main.py api-order-precheck --symbol 1321 --quantity 1 --save-result
 python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1 --save-result
 ```
 
-4. `1306` の場合
+5. `1306` の場合
 
 ```bash
 python main.py api-order-precheck --symbol 1306 --quantity 10

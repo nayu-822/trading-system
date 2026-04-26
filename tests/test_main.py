@@ -204,6 +204,65 @@ def test_main_halt_status_outputs_current_state(monkeypatch) -> None:
     assert "reason: position_mismatch" in output.getvalue()
 
 
+def test_main_config_summary_does_not_fetch_api_token(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main.KabuApiClient,
+        "get_token",
+        lambda self: (_ for _ in ()).throw(AssertionError("token should not be fetched")),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: (_ for _ in ()).throw(
+            AssertionError("runtime should not be built")
+        ),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["config-summary", "--json"])
+
+    assert exit_code in {0, 1}
+    assert '"command": "config-summary"' in output.getvalue()
+
+
+def test_main_config_summary_does_not_call_order_or_position_apis(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: (_ for _ in ()).throw(
+            AssertionError("runtime should not be built")
+        ),
+    )
+    monkeypatch.setattr(
+        app_main.KabuApiClient,
+        "send_order",
+        lambda self, request: (_ for _ in ()).throw(AssertionError("order api should not be called")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        app_main.KabuApiClient,
+        "fetch_positions",
+        lambda self: (_ for _ in ()).throw(AssertionError("position api should not be called")),
+        raising=False,
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["config-summary"])
+
+    assert exit_code in {0, 1}
+    assert "command: config-summary" in output.getvalue()
+
+
 def test_main_halt_sets_manual_halt_and_saves_snapshot(monkeypatch) -> None:
     config = replace(
         load_config(Path("config")),
@@ -1013,6 +1072,171 @@ def test_build_command_config_summary_does_not_include_api_password_value(
     assert "super-secret-password" not in dumped
 
 
+def test_config_summary_payload_includes_token_env_name_but_not_password_value(
+    monkeypatch,
+) -> None:
+    config = load_config(Path("config"))
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "super-secret-password")
+
+    payload = app_main._config_summary_payload(config)
+    dumped = json.dumps(payload, ensure_ascii=False)
+
+    assert payload["token_env_name"] == config.app.kabu_api.token_env_name
+    assert "super-secret-password" not in dumped
+
+
+def test_config_summary_payload_reports_token_env_exists_true(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "set")
+
+    payload = app_main._config_summary_payload(config)
+
+    assert payload["token_env_exists"] is True
+
+
+def test_config_summary_payload_reports_token_env_exists_false(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    monkeypatch.delenv(config.app.kabu_api.token_env_name, raising=False)
+
+    payload = app_main._config_summary_payload(config)
+
+    assert payload["token_env_exists"] is False
+
+
+def test_config_summary_payload_resolves_paper_port(monkeypatch) -> None:
+    base_config = load_config(Path("config"))
+    config = replace(
+        base_config,
+        app=replace(
+            base_config.app,
+            kabu_api=replace(
+                base_config.app.kabu_api,
+                environment=app_main.KabuApiEnvironment.PAPER,
+                base_url="http://localhost:18081/kabusapi",
+            ),
+        ),
+    )
+    monkeypatch.delenv(config.app.kabu_api.token_env_name, raising=False)
+
+    payload = app_main._config_summary_payload(config)
+
+    assert payload["resolved_api_port"] == 18081
+
+
+def test_config_summary_payload_resolves_live_port(monkeypatch) -> None:
+    base_config = load_config(Path("config"))
+    config = replace(
+        base_config,
+        app=replace(
+            base_config.app,
+            kabu_api=replace(
+                base_config.app.kabu_api,
+                environment=app_main.KabuApiEnvironment.LIVE,
+                base_url="http://localhost:18080/kabusapi",
+            ),
+        ),
+    )
+    monkeypatch.delenv(config.app.kabu_api.token_env_name, raising=False)
+
+    payload = app_main._config_summary_payload(config)
+
+    assert payload["resolved_api_port"] == 18080
+
+
+def test_config_summary_payload_resolves_api_paper_label(monkeypatch) -> None:
+    base_config = load_config(Path("config"))
+    config = replace(
+        base_config,
+        app=replace(
+            base_config.app,
+            data_source_mode=app_main.DataSourceMode.API,
+            kabu_api=replace(
+                base_config.app.kabu_api,
+                environment=app_main.KabuApiEnvironment.PAPER,
+            ),
+        ),
+    )
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "set")
+
+    payload = app_main._config_summary_payload(config)
+
+    assert payload["resolved_environment_label"] == "api_paper"
+
+
+def test_config_summary_payload_resolves_api_live_label(monkeypatch) -> None:
+    base_config = load_config(Path("config"))
+    config = replace(
+        base_config,
+        app=replace(
+            base_config.app,
+            data_source_mode=app_main.DataSourceMode.API,
+            kabu_api=replace(
+                base_config.app.kabu_api,
+                environment=app_main.KabuApiEnvironment.LIVE,
+            ),
+        ),
+    )
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "set")
+
+    payload = app_main._config_summary_payload(config)
+
+    assert payload["resolved_environment_label"] == "api_live"
+
+
+def test_config_summary_payload_resolves_csv_paper_label(monkeypatch) -> None:
+    base_config = load_config(Path("config"))
+    config = replace(
+        base_config,
+        app=replace(
+            base_config.app,
+            data_source_mode=app_main.DataSourceMode.CSV,
+            trading_mode=app_main.TradingMode.PAPER,
+        ),
+    )
+    monkeypatch.delenv(config.app.kabu_api.token_env_name, raising=False)
+
+    payload = app_main._config_summary_payload(config)
+
+    assert payload["resolved_environment_label"] == "csv_paper"
+
+
+def test_config_summary_payload_warns_for_live_environment(monkeypatch) -> None:
+    base_config = load_config(Path("config"))
+    config = replace(
+        base_config,
+        app=replace(
+            base_config.app,
+            data_source_mode=app_main.DataSourceMode.API,
+            kabu_api=replace(
+                base_config.app.kabu_api,
+                environment=app_main.KabuApiEnvironment.LIVE,
+                base_url="http://localhost:18080/kabusapi",
+            ),
+        ),
+    )
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "set")
+
+    payload = app_main._config_summary_payload(config)
+
+    assert any("本番API 18080" in warning for warning in payload["warnings"])
+
+
+def test_main_config_summary_outputs_json(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "set")
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["config-summary", "--json"])
+
+    assert exit_code == 0
+    assert '"command": "config-summary"' in output.getvalue()
+    assert '"token_env_name": "' in output.getvalue()
+
+
 def test_write_cli_output_does_not_include_api_password_value(monkeypatch) -> None:
     config = load_config(Path("config"))
     monkeypatch.setenv(config.app.kabu_api.token_env_name, "super-secret-password")
@@ -1553,6 +1777,20 @@ def test_operation_guide_mentions_save_result_option() -> None:
 
     assert "--save-result" in guide
     assert "logs/paper_api_results/" in guide
+
+
+def test_operation_guide_mentions_config_summary() -> None:
+    guide = Path("docs/operation_guide.md").read_text(encoding="utf-8")
+
+    assert "config-summary" in guide
+    assert "API接続や注文は行いません" in guide
+
+
+def test_readme_mentions_config_summary_examples() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "config-summary" in readme
+    assert "python main.py config-summary" in readme
 
 
 def test_paper_api_test_record_template_exists() -> None:
