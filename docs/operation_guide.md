@@ -208,7 +208,12 @@ API接続が必要なため失敗する可能性があるコマンド:
 python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1
 python main.py api-order-dry-run --symbol 1570 --side BUY --quantity 1 --json
 python main.py api-order-dry-run --symbol 1306 --side BUY --quantity 10
+python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1 --save-result
 ```
+
+`--save-result` を付けると、結果 JSON を `logs/paper_api_results/` に保存できます。  
+保存対象には `executed_at`、`git_commit`、`config_summary`、`order_id`、`order_status`、`reconciliation_result` などが含まれます。  
+API パスワード値、API トークン値、Authorization ヘッダーは保存しません。
 
 ### 実行後の確認手順
 
@@ -256,10 +261,12 @@ python main.py api-order-dry-run --symbol 1306 --side BUY --quantity 10
 python main.py api-order-precheck --symbol 1321 --quantity 1
 python main.py api-order-precheck --symbol 1306 --quantity 10
 python main.py api-order-precheck --symbol 1570 --quantity 1 --json
+python main.py api-order-precheck --symbol 1321 --quantity 1 --save-result
 ```
 
 出力には `executed_at`、`git_commit`、`config_summary`、`record_hint` が含まれます。  
 `record_hint` に従って `docs/paper_api_test_record_template.md` へ結果を記録してください。
+`--save-result` を付けると、同じ内容を `logs/paper_api_results/` へ JSON で保存できます。
 
 ## paper検証API実行チェックリスト
 
@@ -329,6 +336,8 @@ paper 検証 API の例:
 記録:
 
 - `api-order-precheck` / `api-order-dry-run` の結果は `docs/paper_api_test_record_template.md` に記録してください。
+- `--save-result` を付けると、`logs/paper_api_results/` に API パスワードを含まない結果 JSON を保存できます。
+- 保存した JSON は、本番移行前の検証記録や失敗時の調査資料として使えます。
 
 live 本番 API の注意:
 

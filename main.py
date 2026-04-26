@@ -64,6 +64,7 @@ from trading.risk_manager import RiskManager
 CONFIG_DIR = Path("config")
 DEFAULT_CSV_PATH = Path("data/market_data.csv")
 DEFAULT_LOG_LEVEL = "INFO"
+PAPER_API_RESULTS_DIR = Path("logs/paper_api_results")
 
 
 class LiveOrderNotAllowedError(ValueError):
@@ -1813,6 +1814,7 @@ def _run_operational_command(
     }:
         raise ValueError(f"unsupported command: {command}")
     json_output = "--json" in arguments
+    save_result = _result_save_requested(arguments)
     snapshot_store = OperationalSnapshotStore(
         config=config,
         storage=FileStorage(),
@@ -1895,6 +1897,8 @@ def _run_operational_command(
                 message=f"runtime initialization failed: {error}",
                 halt_state=snapshot_store.load_halt_state(),
             )
+        if save_result and command in {"api-order-precheck", "api-order-dry-run"}:
+            _save_paper_api_result_payload(payload)
         _log_operational_command(
             logger=logger,
             command=command,
@@ -1925,6 +1929,9 @@ def _run_operational_command(
                     arguments
                 ),
             )
+        save_ok = True
+        if save_result:
+            save_ok = _save_paper_api_result_payload(payload)
         _log_operational_command(
             logger=logger,
             command=command,
@@ -1934,7 +1941,7 @@ def _run_operational_command(
             payload=payload,
         )
         _write_cli_output(payload, json_output=json_output)
-        return 0 if payload["ok"] else 1
+        return 0 if payload["ok"] and save_ok else 1
 
     if command == "api-order-dry-run":
         try:
@@ -1955,6 +1962,9 @@ def _run_operational_command(
                     arguments
                 ),
             )
+        save_ok = True
+        if save_result:
+            save_ok = _save_paper_api_result_payload(payload)
         _log_operational_command(
             logger=logger,
             command=command,
@@ -1964,7 +1974,7 @@ def _run_operational_command(
             payload=payload,
         )
         _write_cli_output(payload, json_output=json_output)
-        return 0 if payload["ok"] else 1
+        return 0 if payload["ok"] and save_ok else 1
 
     if command == "resume":
         ok = runtime.resume_trading()
@@ -2026,6 +2036,19 @@ def _parse_required_int_option(arguments: list[str], name: str) -> int:
     """必須整数オプション値を取得する。"""
 
     return int(_parse_required_option(arguments, name))
+
+
+def _result_save_requested(arguments: list[str]) -> bool:
+    """結果保存オプションの指定有無を返す。
+
+    Args:
+        arguments: CLI 引数一覧。
+
+    Returns:
+        bool: `--save-result` が指定されている場合は True。
+    """
+
+    return "--save-result" in arguments
 
 
 def _parse_optional_int_option_safe(arguments: list[str], name: str) -> int:
@@ -2254,6 +2277,23 @@ def _resolve_git_commit() -> str:
     return commit or "unknown"
 
 
+def _prepare_operational_payload_for_output(payload: dict[str, Any]) -> dict[str, Any]:
+    """運用系 CLI payload を出力前の形式へ整える。
+
+    Args:
+        payload: 整形対象の payload。
+
+    Returns:
+        dict[str, Any]: 整形後の payload。
+    """
+
+    if payload.get("command") == "api-order-dry-run":
+        return _finalize_api_order_dry_run_payload(payload)
+    if payload.get("command") == "api-order-precheck":
+        return _finalize_api_order_precheck_payload(payload)
+    return payload
+
+
 def _build_command_config_summary(config: SystemConfig) -> dict[str, Any]:
     """記録用の設定要約を生成する。
 
@@ -2296,6 +2336,153 @@ def _attach_command_record_context(
         "docs/paper_api_test_record_template.md に結果を記録してください",
     )
     return payload
+
+
+def _sanitize_executed_at_for_result_filename(executed_at: str) -> str:
+    """結果保存ファイル名に使う実行時刻文字列を整形する。
+
+    Args:
+        executed_at: ISO 形式を想定した実行時刻文字列。
+
+    Returns:
+        str: `YYYYMMDDTHHMMSS` 形式に整形した文字列。
+    """
+
+    if not executed_at:
+        return datetime.now().strftime("%Y%m%dT%H%M%S")
+    normalized = executed_at
+    if "." in normalized:
+        normalized = normalized.split(".", 1)[0]
+    if "+" in normalized:
+        normalized = normalized.split("+", 1)[0]
+    if "Z" in normalized:
+        normalized = normalized.replace("Z", "")
+    return normalized.replace("-", "").replace(":", "")
+
+
+def _sanitize_result_filename_component(value: str) -> str:
+    """結果保存ファイル名の構成要素を安全な文字へ整形する。
+
+    Args:
+        value: 整形対象の文字列。
+
+    Returns:
+        str: 英数字、`-`、`_` のみで構成された文字列。
+    """
+
+    sanitized = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "-"
+        for character in value
+    )
+    sanitized = sanitized.strip("-_")
+    return sanitized or "unknown"
+
+
+def _build_paper_api_result_file_path(
+    payload: dict[str, Any],
+    base_dir: Path | None = None,
+) -> Path:
+    """paper 検証 API 結果の保存先ファイルパスを構築する。
+
+    Args:
+        payload: 保存対象の payload。
+        base_dir: 保存先ディレクトリ。
+
+    Returns:
+        Path: 保存先ファイルパス。
+    """
+
+    target_dir = base_dir or PAPER_API_RESULTS_DIR
+    command = _sanitize_result_filename_component(str(payload.get("command", "result")))
+    executed_at = _sanitize_executed_at_for_result_filename(
+        str(payload.get("executed_at", ""))
+    )
+    symbol = _sanitize_result_filename_component(str(payload.get("symbol", "")))
+    quantity = _sanitize_result_filename_component(str(payload.get("quantity", 0)))
+    filename_parts = [command, executed_at, symbol]
+    side = str(payload.get("side", "")).strip()
+    if command == "api-order-dry-run" and side:
+        filename_parts.append(_sanitize_result_filename_component(side))
+    filename_parts.append(quantity)
+    return target_dir / f"{'_'.join(filename_parts)}.json"
+
+
+def _sanitize_payload_for_result_save(value: Any) -> Any:
+    """保存前 payload から機微情報を除去する。
+
+    Args:
+        value: 保存対象の値。
+
+    Returns:
+        Any: 機微情報を除去した値。
+    """
+
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            lowered_key = key.lower()
+            if (
+                lowered_key in {"token", "password", "authorization"}
+                or lowered_key.endswith("_token")
+                or lowered_key.endswith("_password")
+                or "authorization" in lowered_key
+            ):
+                continue
+            sanitized[key] = _sanitize_payload_for_result_save(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_payload_for_result_save(item) for item in value]
+    return value
+
+
+def _write_paper_api_result_file(path: Path, payload: dict[str, Any]) -> None:
+    """paper 検証 API 結果を JSON ファイルへ保存する。
+
+    Args:
+        path: 保存先ファイルパス。
+        payload: 保存対象の payload。
+
+    Returns:
+        なし。
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _save_paper_api_result_payload(
+    payload: dict[str, Any],
+    base_dir: Path | None = None,
+) -> bool:
+    """paper 検証 API 結果 payload を任意で保存する。
+
+    Args:
+        payload: 保存対象の payload。
+        base_dir: 保存先ディレクトリ。
+
+    Returns:
+        bool: 保存に成功した場合は True。
+    """
+
+    _prepare_operational_payload_for_output(payload)
+    try:
+        result_path = _build_paper_api_result_file_path(payload, base_dir=base_dir)
+        payload["result_saved"] = True
+        payload["result_file"] = str(result_path)
+        payload.pop("save_error", None)
+        _write_paper_api_result_file(
+            result_path,
+            _sanitize_payload_for_result_save(payload),
+        )
+    except (OSError, TypeError, ValueError) as error:
+        payload["result_saved"] = False
+        payload["result_file"] = None
+        payload["save_error"] = str(error)
+        return False
+    return True
 
 
 def _append_api_order_precheck_check(
@@ -2602,10 +2789,7 @@ def _is_paper_api_base_url(base_url: str) -> bool:
 def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
     """CLI 出力を標準出力へ書き出す。"""
 
-    if payload.get("command") == "api-order-dry-run":
-        _finalize_api_order_dry_run_payload(payload)
-    if payload.get("command") == "api-order-precheck":
-        _finalize_api_order_precheck_payload(payload)
+    _prepare_operational_payload_for_output(payload)
     if json_output:
         sys.stdout.write(json.dumps(payload, ensure_ascii=False))
         sys.stdout.write("\n")
@@ -2639,6 +2823,11 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
             sys.stdout.write("next_action:\n")
             for action in payload["next_action"]:
                 sys.stdout.write(f"  - {action}\n")
+        if "result_saved" in payload:
+            sys.stdout.write(f"result_saved: {payload['result_saved']}\n")
+            sys.stdout.write(f"result_file: {payload.get('result_file')}\n")
+        if payload.get("save_error"):
+            sys.stdout.write(f"save_error: {payload['save_error']}\n")
         if payload.get("record_hint"):
             sys.stdout.write(f"record_hint: {payload['record_hint']}\n")
         return
@@ -2686,6 +2875,11 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
             sys.stdout.write("log_hint:\n")
             for hint in payload["log_hint"]:
                 sys.stdout.write(f"  - {hint}\n")
+        if "result_saved" in payload:
+            sys.stdout.write(f"result_saved: {payload['result_saved']}\n")
+            sys.stdout.write(f"result_file: {payload.get('result_file')}\n")
+        if payload.get("save_error"):
+            sys.stdout.write(f"save_error: {payload['save_error']}\n")
         if payload.get("record_hint"):
             sys.stdout.write(f"record_hint: {payload['record_hint']}\n")
         return
@@ -2722,7 +2916,7 @@ def _log_operational_command(
 
     if payload is not None and command in {"api-order-precheck", "api-order-dry-run"}:
         logger.info(
-            "operational command command=%s executed_at=%s git_commit=%s symbol=%s side=%s quantity=%s order_id=%s order_status=%s reconciliation_result=%s result=%s reason=%s message=%s",
+            "operational command command=%s executed_at=%s git_commit=%s symbol=%s side=%s quantity=%s order_id=%s order_status=%s reconciliation_result=%s result_saved=%s result_file=%s result=%s reason=%s message=%s",
             command,
             payload.get("executed_at", ""),
             payload.get("git_commit", "unknown"),
@@ -2732,6 +2926,8 @@ def _log_operational_command(
             payload.get("order_id", ""),
             payload.get("order_status", ""),
             payload.get("reconciliation_result", "UNKNOWN"),
+            payload.get("result_saved", ""),
+            payload.get("result_file", ""),
             result,
             reason,
             message,

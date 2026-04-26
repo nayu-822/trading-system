@@ -1069,6 +1069,286 @@ def test_main_api_order_precheck_succeeds_even_when_git_commit_resolution_times_
     assert '"git_commit": "unknown"' in output.getvalue()
 
 
+def test_main_api_order_precheck_save_result_creates_json_file(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    result_dir = Path("tests/.tmp_main_cli/paper_api_results_precheck")
+    if result_dir.exists():
+        for path in result_dir.rglob("*"):
+            if path.is_file():
+                path.unlink()
+        for path in sorted(result_dir.rglob("*"), reverse=True):
+            if path.is_dir():
+                path.rmdir()
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "super-secret-password")
+    fake_runtime = _FakeRuntime(
+        halt_state=TradingHaltState(),
+        api_order_precheck_result={
+            "ok": True,
+            "command": "api-order-precheck",
+            "executed_at": "2026-04-26T12:34:56+09:00",
+            "git_commit": "abc1234",
+            "config_summary": {
+                "trading_mode": config.app.trading_mode.value,
+                "data_source_mode": config.app.data_source_mode.value,
+                "kabu_api_environment": config.app.kabu_api.environment.value,
+                "token_env_name": config.app.kabu_api.token_env_name,
+                "trade_symbols": list(config.app.trade_symbols),
+                "max_order_quantity": config.app.max_order_quantity,
+            },
+            "record_hint": "docs/paper_api_test_record_template.md に結果を記録してください",
+            "trading_mode": config.app.trading_mode.value,
+            "kabu_api_environment": config.app.kabu_api.environment.value,
+            "base_url": config.app.kabu_api.base_url,
+            "symbol": "1321",
+            "side": "BUY",
+            "quantity": 1,
+            "is_halted": False,
+            "reason": "",
+            "message": "ok",
+            "checks": [{"name": "environment_is_paper", "ok": True, "message": "ok"}],
+            "errors": [],
+            "next_action": ["api-order-dry-run を実行できます"],
+        },
+    )
+    monkeypatch.setattr(app_main, "PAPER_API_RESULTS_DIR", result_dir)
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: fake_runtime,
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        [
+            "api-order-precheck",
+            "--symbol",
+            "1321",
+            "--quantity",
+            "1",
+            "--save-result",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output.getvalue())
+    assert payload["result_saved"] is True
+    assert payload["result_file"]
+    result_file = Path(payload["result_file"])
+    assert result_file.exists()
+    assert result_dir.exists()
+    saved_text = result_file.read_text(encoding="utf-8")
+    saved_payload = json.loads(saved_text)
+    assert saved_payload["executed_at"] == "2026-04-26T12:34:56+09:00"
+    assert saved_payload["git_commit"] == "abc1234"
+    assert saved_payload["config_summary"]["token_env_name"] == config.app.kabu_api.token_env_name
+    assert "super-secret-password" not in saved_text
+
+
+def test_main_api_order_dry_run_save_result_creates_json_file(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    result_dir = Path("tests/.tmp_main_cli/paper_api_results_dry_run")
+    if result_dir.exists():
+        for path in result_dir.rglob("*"):
+            if path.is_file():
+                path.unlink()
+        for path in sorted(result_dir.rglob("*"), reverse=True):
+            if path.is_dir():
+                path.rmdir()
+    fake_runtime = _FakeRuntime(
+        halt_state=TradingHaltState(),
+        api_order_dry_run_result={
+            "ok": True,
+            "command": "api-order-dry-run",
+            "executed_at": "2026-04-26T12:35:01+09:00",
+            "git_commit": "abc1234",
+            "config_summary": {
+                "trading_mode": config.app.trading_mode.value,
+                "data_source_mode": config.app.data_source_mode.value,
+                "kabu_api_environment": config.app.kabu_api.environment.value,
+                "token_env_name": config.app.kabu_api.token_env_name,
+                "trade_symbols": list(config.app.trade_symbols),
+                "max_order_quantity": config.app.max_order_quantity,
+            },
+            "record_hint": "docs/paper_api_test_record_template.md に結果を記録してください",
+            "symbol": "1321",
+            "side": "BUY",
+            "quantity": 1,
+            "order_id": "api-order-1",
+            "order_status": "REQUESTED",
+            "filled_quantity": 0,
+            "remaining_quantity": 1,
+            "position_quantity": 0,
+            "position_side": "NONE",
+            "reconciliation_result": "OK",
+            "position": {"symbol": "1321", "quantity": 0, "average_price": 0.0},
+            "trading_mode": config.app.trading_mode.value,
+            "kabu_api_environment": config.app.kabu_api.environment.value,
+            "base_url": config.app.kabu_api.base_url,
+            "is_halted": False,
+            "halt_reason": "",
+            "next_action": ["preflight-check を実行して状態を再確認してください"],
+            "log_hint": ["command=api-order-dry-run で検索してください"],
+            "checks": [],
+            "errors": [],
+        },
+    )
+    monkeypatch.setattr(app_main, "PAPER_API_RESULTS_DIR", result_dir)
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: fake_runtime,
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        [
+            "api-order-dry-run",
+            "--symbol",
+            "1321",
+            "--side",
+            "BUY",
+            "--quantity",
+            "1",
+            "--save-result",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output.getvalue())
+    assert payload["result_saved"] is True
+    assert payload["result_file"]
+    result_file = Path(payload["result_file"])
+    assert result_file.exists()
+    saved_payload = json.loads(result_file.read_text(encoding="utf-8"))
+    assert saved_payload["order_id"] == "api-order-1"
+    assert saved_payload["order_status"] == "REQUESTED"
+    assert saved_payload["config_summary"]["token_env_name"] == config.app.kabu_api.token_env_name
+
+
+def test_main_api_order_precheck_does_not_save_without_option(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    result_dir = Path("tests/.tmp_main_cli/paper_api_results_none")
+    if result_dir.exists():
+        for path in result_dir.rglob("*"):
+            if path.is_file():
+                path.unlink()
+        for path in sorted(result_dir.rglob("*"), reverse=True):
+            if path.is_dir():
+                path.rmdir()
+    monkeypatch.setattr(app_main, "PAPER_API_RESULTS_DIR", result_dir)
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: _FakeRuntime(
+            halt_state=TradingHaltState()
+        ),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["api-order-precheck", "--symbol", "1321", "--quantity", "1"])
+
+    assert exit_code == 0
+    assert not result_dir.exists()
+
+
+def test_main_api_order_precheck_save_result_failure_returns_error(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+
+    def raise_save_error(path: Path, payload: dict) -> None:
+        raise OSError("save failed")
+
+    monkeypatch.setattr(app_main, "_write_paper_api_result_file", raise_save_error)
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: _FakeRuntime(
+            halt_state=TradingHaltState()
+        ),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        [
+            "api-order-precheck",
+            "--symbol",
+            "1321",
+            "--quantity",
+            "1",
+            "--save-result",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    payload = json.loads(output.getvalue())
+    assert payload["result_saved"] is False
+    assert payload["result_file"] is None
+    assert payload["save_error"] == "save failed"
+
+
+def test_main_api_order_dry_run_save_result_failure_preserves_order_result(
+    monkeypatch,
+) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+
+    def raise_save_error(path: Path, payload: dict) -> None:
+        raise OSError("save failed")
+
+    monkeypatch.setattr(app_main, "_write_paper_api_result_file", raise_save_error)
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: _FakeRuntime(
+            halt_state=TradingHaltState()
+        ),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        [
+            "api-order-dry-run",
+            "--symbol",
+            "1321",
+            "--side",
+            "BUY",
+            "--quantity",
+            "1",
+            "--save-result",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    payload = json.loads(output.getvalue())
+    assert payload["ok"] is True
+    assert payload["order_id"] == "api-order-1"
+    assert payload["result_saved"] is False
+    assert payload["result_file"] is None
+    assert payload["save_error"] == "save failed"
+
+
 def test_operation_guide_mentions_api_order_dry_run_follow_up_steps() -> None:
     guide = Path("docs/operation_guide.md").read_text(encoding="utf-8")
 
@@ -1085,6 +1365,13 @@ def test_operation_guide_mentions_api_order_precheck() -> None:
     assert "注文は送信しません" in guide
     assert "KABU_API_PASSWORD_PAPER" in guide
     assert "paper検証API実行チェックリスト" in guide
+
+
+def test_operation_guide_mentions_save_result_option() -> None:
+    guide = Path("docs/operation_guide.md").read_text(encoding="utf-8")
+
+    assert "--save-result" in guide
+    assert "logs/paper_api_results/" in guide
 
 
 def test_paper_api_test_record_template_exists() -> None:
