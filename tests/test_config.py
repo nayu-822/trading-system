@@ -208,6 +208,30 @@ def test_validate_config_rejects_invalid_lot_range() -> None:
         validate_config(invalid_config)
 
 
+def test_load_config_sets_etf_lot_for_1306() -> None:
+    config = load_config(Path("config"))
+    symbol = next(item for item in config.symbols if item.code == "1306")
+
+    assert symbol.lot_min == 10
+    assert symbol.lot_max == 10
+
+
+def test_load_config_sets_etf_lot_for_1321() -> None:
+    config = load_config(Path("config"))
+    symbol = next(item for item in config.symbols if item.code == "1321")
+
+    assert symbol.lot_min == 1
+    assert symbol.lot_max == 1
+
+
+def test_load_config_sets_etf_lot_for_1570() -> None:
+    config = load_config(Path("config"))
+    symbol = next(item for item in config.symbols if item.code == "1570")
+
+    assert symbol.lot_min == 1
+    assert symbol.lot_max == 1
+
+
 def test_validate_config_rejects_allocation_total_over_one() -> None:
     config = load_config(Path("config"))
     first_symbol = config.symbols[0]

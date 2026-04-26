@@ -81,7 +81,11 @@ def _create_signal_event(
 
 def test_signal_process_publishes_buy_when_price_rises() -> None:
     event_bus = EventBus()
-    signal_process = SignalProcess(event_bus=event_bus)
+    signal_process = SignalProcess(
+        event_bus=event_bus,
+        trend_short_window=1,
+        trend_long_window=2,
+    )
     received_events: list[BaseEvent[Any]] = []
 
     signal_process.start()
@@ -92,12 +96,17 @@ def test_signal_process_publishes_buy_when_price_rises() -> None:
     assert len(received_events) == 1
     assert isinstance(received_events[0], SignalDetected)
     assert received_events[0].payload.signal_type == SignalType.BUY
-    assert received_events[0].payload.indicators[0].value == 1.0
+    assert received_events[0].payload.indicators[0].name == "short_ma"
+    assert received_events[0].payload.indicators[0].value == 101.0
 
 
 def test_signal_process_publishes_sell_when_price_falls() -> None:
     event_bus = EventBus()
-    signal_process = SignalProcess(event_bus=event_bus)
+    signal_process = SignalProcess(
+        event_bus=event_bus,
+        trend_short_window=1,
+        trend_long_window=2,
+    )
     received_events: list[BaseEvent[Any]] = []
 
     signal_process.start()
@@ -108,12 +117,17 @@ def test_signal_process_publishes_sell_when_price_falls() -> None:
     assert len(received_events) == 1
     assert isinstance(received_events[0], SignalDetected)
     assert received_events[0].payload.signal_type == SignalType.SELL
-    assert received_events[0].payload.indicators[0].value == -1.0
+    assert received_events[0].payload.indicators[0].name == "short_ma"
+    assert received_events[0].payload.indicators[0].value == 100.0
 
 
 def test_signal_process_keeps_last_price_by_symbol() -> None:
     event_bus = EventBus()
-    signal_process = SignalProcess(event_bus=event_bus)
+    signal_process = SignalProcess(
+        event_bus=event_bus,
+        trend_short_window=1,
+        trend_long_window=2,
+    )
     received_events: list[BaseEvent[Any]] = []
 
     signal_process.start()
@@ -126,10 +140,12 @@ def test_signal_process_keeps_last_price_by_symbol() -> None:
     assert len(received_events) == 2
     assert received_events[0].symbol == "7203"
     assert received_events[0].payload.signal_type == SignalType.BUY
-    assert received_events[0].payload.indicators[0].value == 1.0
+    assert received_events[0].payload.indicators[2].name == "ma_diff"
+    assert received_events[0].payload.indicators[2].value == 0.5
     assert received_events[1].symbol == "6758"
     assert received_events[1].payload.signal_type == SignalType.SELL
-    assert received_events[1].payload.indicators[0].value == -1.0
+    assert received_events[1].payload.indicators[2].name == "ma_diff"
+    assert received_events[1].payload.indicators[2].value == -0.5
     toyota_slot = _find_strategy_slot(signal_process, symbol="7203")
     sony_slot = _find_strategy_slot(signal_process, symbol="6758")
 
@@ -154,6 +170,8 @@ def test_signal_process_switches_strategy_by_symbol_config() -> None:
             ),
         ),
         range_window=2,
+        trend_short_window=1,
+        trend_long_window=2,
     )
     received_events: list[BaseEvent[Any]] = []
 
@@ -251,6 +269,8 @@ def test_signal_process_falls_back_to_trend_when_auto_is_configured(caplog) -> N
                 strategy_type=StrategyType.AUTO,
             ),
         ),
+        trend_short_window=1,
+        trend_long_window=2,
     )
     received_events: list[BaseEvent[Any]] = []
 
@@ -269,13 +289,17 @@ def test_signal_process_falls_back_to_trend_when_auto_is_configured(caplog) -> N
     assert len(received_events) == 1
     assert received_events[0].payload.signal_type == SignalType.BUY
     assert received_events[0].payload.strategy_type == StrategyType.TREND
-    assert received_events[0].payload.indicators[0].name == "price_delta"
-    assert received_events[0].payload.indicators[0].value == 1.0
+    assert received_events[0].payload.indicators[0].name == "short_ma"
+    assert received_events[0].payload.indicators[0].value == 101.0
 
 
 def test_signal_process_start_stop_start_does_not_duplicate_subscription() -> None:
     event_bus = EventBus()
-    signal_process = SignalProcess(event_bus=event_bus)
+    signal_process = SignalProcess(
+        event_bus=event_bus,
+        trend_short_window=1,
+        trend_long_window=2,
+    )
     received_events: list[BaseEvent[Any]] = []
 
     signal_process.start()
@@ -1392,7 +1416,11 @@ def test_trading_process_updates_average_price_when_short_reverses_to_long() -> 
 
 def test_csv_event_flow_publishes_order_requested_end_to_end() -> None:
     event_bus = EventBus()
-    signal_process = SignalProcess(event_bus=event_bus)
+    signal_process = SignalProcess(
+        event_bus=event_bus,
+        trend_short_window=1,
+        trend_long_window=2,
+    )
     trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
     external_data_process = ExternalDataProcess(
         event_bus=event_bus,
@@ -1415,7 +1443,11 @@ def test_csv_event_flow_publishes_order_requested_end_to_end() -> None:
 
 def test_csv_event_flow_publishes_position_updated_in_paper_mode() -> None:
     event_bus = EventBus()
-    signal_process = SignalProcess(event_bus=event_bus)
+    signal_process = SignalProcess(
+        event_bus=event_bus,
+        trend_short_window=1,
+        trend_long_window=2,
+    )
     trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
     external_data_process = ExternalDataProcess(
         event_bus=event_bus,
@@ -1439,7 +1471,11 @@ def test_csv_event_flow_publishes_position_updated_in_paper_mode() -> None:
 
 def test_api_event_flow_publishes_position_updated_in_paper_mode() -> None:
     event_bus = EventBus()
-    signal_process = SignalProcess(event_bus=event_bus)
+    signal_process = SignalProcess(
+        event_bus=event_bus,
+        trend_short_window=1,
+        trend_long_window=2,
+    )
     trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
     external_data_process = ExternalDataProcess(
         event_bus=event_bus,

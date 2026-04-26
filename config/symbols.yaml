@@ -18,8 +18,8 @@ symbols:
     market: etf
     strategy: auto
     allocation_ratio: 0.25
-    lot_min: 100
-    lot_max: 100
+    lot_min: 10
+    lot_max: 10
     lot_multiplier: 1.0
     strategy_params_override:
       params:
@@ -34,8 +34,8 @@ symbols:
     market: etf
     strategy: auto
     allocation_ratio: 0.25
-    lot_min: 100
-    lot_max: 100
+    lot_min: 1
+    lot_max: 1
     lot_multiplier: 1.0
     strategy_params_override:
       params:
@@ -50,8 +50,8 @@ symbols:
     market: etf
     strategy: auto
     allocation_ratio: 0.25
-    lot_min: 100
-    lot_max: 100
+    lot_min: 1
+    lot_max: 1
     lot_multiplier: 1.0
     strategy_params_override:
       params:
