@@ -1,25 +1,118 @@
+# アプリ全体の実行モードです。
+# 主な指定値:
+#   mock: ローカル確認向けの既定値です。周辺処理の確認を優先します。
+#   paper: 検証向けモードです。実運用前の確認に使います。
+#   live: 本番運用向けモードです。周辺の live 前提処理と合わせて使います。
+#   backtest: バックテストや検証ロジック確認向けです。
+# 実際の動作は trading_mode や data_source_mode と組み合わせて決まります。
 mode: mock
+
+# 注文系の実行モードです。
+# 指定値:
+#   paper: 内部的に実注文を送らない確認向けです。MockOrderGateway を使う想定です。
+#   live: LiveOrderGateway など実注文系処理を有効にします。
+# kabu API の接続先を表す kabu_api_environment とは別概念です。
 trading_mode: paper
+
+# live 系処理を明示的に有効化する安全スイッチです。
+# 値ごとの考え方:
+#   false: live 系処理を禁止します。初回確認、CSV 検証、誤発注防止向けです。
+#   true: trading_mode=live のときに必要です。設定確認後にだけ有効化してください。
 live_enabled: false
+
+# 市場データの取得元です。
+# 指定値:
+#   csv: ローカル CSV データを使う確認向けです。kabu ステーション起動は不要です。
+#   api: kabu ステーション API を使う確認・運用向けです。API 接続が必要です。
+# kabu API を利用する場合は api にします。
 data_source_mode: csv
+
+# ログレベルです。通常は INFO を推奨します。
 log_level: INFO
+
+# API mode 時の REST 注文状態取得ポーリング間隔です。
+# 検証中は短め、本番では API 負荷を見ながら調整してください。
 rest_poll_interval_sec: 5
+
+# push 配信を使う場合のスイッチです。
+# CSV 検証では false のままで問題ありません。
 push_enabled: false
+
+# 1 回あたりの最大注文数量です。
+# 検証時は小さく、本番でも最初は小さく設定してください。
+# api-order-precheck / api-order-dry-run でもこの値を超える数量は拒否されます。
 max_order_quantity: 1
+
+# 注文を許可する銘柄コードのリストです。
+# このリスト外の銘柄には注文しません。
+# 本番・検証とも、使う銘柄だけを明示してください。
 trade_symbols:
   - "1306"
   - "1321"
   - "1570"
+
+# API 実建玉と内部建玉の突合を行うかどうかです。
+# 値ごとの考え方:
+#   true: API 実建玉と内部建玉を突合します。検証・本番とも基本推奨です。
+#   false: 突合を行いません。安全性が下がるため、通常は推奨しません。
 position_reconciliation_enabled: true
+
+# 平均取得単価の突合許容誤差です。
+# 単価比較のズレ許容幅なので、0 以上で小さめを維持してください。
 position_average_price_tolerance: 0.01
+
+# kabu ステーション API の接続先環境です。
+# 指定値:
+#   paper: 検証 API を使います。通常は 18081 ポートです。
+#   live: 本番 API を使います。通常は 18080 ポートです。
+# trading_mode とは別概念で、live/paper の組み合わせにより安全制御が変わります。
 kabu_api_environment: paper
+
+# API リクエストのタイムアウト秒です。
+# API 検証時は短め、本番で回線事情に応じて調整します。
 api_timeout_sec: 5
+
+# API パスワードそのものではなく、参照する環境変数名です。
+# 指定値の考え方:
+#   KABU_API_PASSWORD_PAPER: 検証 API 用の環境変数名です。
+#   KABU_API_PASSWORD_LIVE: 本番 API 用の環境変数名です。
+#   それ以外: 組織内の命名規則がある場合のみ使ってください。
+# YAML に API パスワードを直接書かないでください。
 token_env_name: KABU_API_PASSWORD
+
+# kabu_api_environment から自動決定される base_url を上書きしたい場合のみ使います。
+# 通常は未指定のままで、paper=18081 / live=18080 の自動設定を利用してください。
+# kabu_api_base_url: http://localhost:18081/kabusapi
+
+# スナップショット保存を有効にするかどうかです。
+# 運用時の復旧用途で使います。ローカル確認では false でも構いません。
 snapshot_enabled: false
+
+# スナップショット保存先ディレクトリです。
 snapshot_dir: snapshots
+
+# スナップショット保存間隔秒です。
 snapshot_interval_sec: 60
+
+# 保持する世代数です。
 snapshot_max_generations: 3
+
+# 短時間連続保存を抑えるディレイ秒です。
 snapshot_debounce_sec: 5
+
+# 起動時に既存スナップショットから復元するかどうかです。
+# 値ごとの考え方:
+#   false: 既存スナップショットを使わず新規起動します。
+#   true: スナップショットから復元を試みます。再起動確認時に使います。
 recovery_enabled: false
+
+# 復旧モードです。現在の設計・実装に合わせて指定してください。
+# 現在の想定値:
+#   manual: 手動確認後に resume する運用向けです。
 recovery_mode: manual
+
+# 起動時に API 建玉・注文状態の突合を追加で行うかどうかです。
+# 値ごとの考え方:
+#   false: 起動時の追加突合を行いません。既定の軽量起動向けです。
+#   true: API 建玉・注文状態の再確認を行います。再起動確認時に検討します。
 startup_reconcile_enabled: false

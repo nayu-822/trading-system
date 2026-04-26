@@ -1,0 +1,36 @@
+# kabu ステーション検証 API 18081 で接続確認・建玉取得・注文状態取得を行うサンプルです。
+# 本番市場には発注しない前提ですが、live 系処理を使うため設定確認は必須です。
+# このファイルは自動参照されません。内容を確認して config/app.yaml へ反映してください。
+
+mode: mock
+trading_mode: live
+live_enabled: true
+data_source_mode: api
+log_level: INFO
+rest_poll_interval_sec: 5
+push_enabled: false
+max_order_quantity: 10
+trade_symbols:
+  - "1306"
+  - "1321"
+  - "1570"
+position_reconciliation_enabled: true
+position_average_price_tolerance: 0.01
+kabu_api_environment: paper
+api_timeout_sec: 5
+
+# API パスワードは環境変数から参照します。YAML に直接書かないでください。
+token_env_name: KABU_API_PASSWORD_PAPER
+
+# base_url は通常手書きせず、paper の自動解決 (通常 18081) を使います。
+# kabu_api_base_url: http://localhost:18081/kabusapi
+
+# 実行前に kabu ステーションを検証モードで起動してください。
+snapshot_enabled: false
+snapshot_dir: snapshots
+snapshot_interval_sec: 60
+snapshot_max_generations: 3
+snapshot_debounce_sec: 5
+recovery_enabled: false
+recovery_mode: manual
+startup_reconcile_enabled: false

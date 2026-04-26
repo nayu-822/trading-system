@@ -1,15 +1,29 @@
+# 取引対象銘柄一覧です。
+# ここで enabled=true の銘柄だけが SignalProcess / TradingProcess の対象になります。
+# trade_symbols と合わせて、実際に注文を許可する銘柄を絞り込んでください。
+
 symbols:
   - code: "7203"
+    # 銘柄コードと表示名です。
     name: Toyota
+    # false にすると対象外になります。
     enabled: true
+    # 市場区分の識別用メモです。
     market: prime
+    # 銘柄ごとの戦略タイプです。default_strategy や auto 選択と合わせて使います。
     strategy: auto
+    # ポートフォリオ内の配分比率です。
     allocation_ratio: 0.25
+    # 最小注文単位です。現物株は通常 100 株単位です。
     lot_min: 100
+    # 最大注文単位です。検証時は過大にしないでください。
     lot_max: 100
+    # ロット計算時の倍率です。通常は 1.0 を使います。
     lot_multiplier: 1.0
+    # 銘柄別パラメータ上書きです。未指定なら strategy.yaml の既定値を使います。
     strategy_params_override:
       params: {}
+    # 運用メモです。機密情報は書かないでください。
     note: phase1 sample
 
   - code: "1306"
@@ -18,6 +32,7 @@ symbols:
     market: etf
     strategy: auto
     allocation_ratio: 0.25
+    # 検証向けに 10 口固定へ抑えています。
     lot_min: 10
     lot_max: 10
     lot_multiplier: 1.0
@@ -34,6 +49,7 @@ symbols:
     market: etf
     strategy: auto
     allocation_ratio: 0.25
+    # 検証向けに 1 口固定へ抑えています。
     lot_min: 1
     lot_max: 1
     lot_multiplier: 1.0
@@ -50,6 +66,7 @@ symbols:
     market: etf
     strategy: auto
     allocation_ratio: 0.25
+    # 検証向けに 1 口固定へ抑えています。
     lot_min: 1
     lot_max: 1
     lot_multiplier: 1.0

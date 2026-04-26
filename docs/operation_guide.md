@@ -252,3 +252,33 @@ python main.py api-order-precheck --symbol 1321 --quantity 1
 python main.py api-order-precheck --symbol 1306 --quantity 10
 python main.py api-order-precheck --symbol 1570 --quantity 1 --json
 ```
+
+## 設定サンプル
+
+用途別の参照用サンプルは `config/samples` に配置しています。
+これらのファイルはコードから自動参照されません。内容を確認して `config/app.yaml` に反映してください。
+
+- CSVローカル確認: `config/samples/app.csv-paper.sample.yaml`
+- 検証API接続確認: `config/samples/app.api-paper.sample.yaml`
+- 検証API注文フロー確認: `config/samples/app.api-paper-dry-run.sample.yaml`
+- 本番API少額確認: `config/samples/app.api-live-small.sample.yaml`
+- バックテスト確認: `config/samples/app.backtest.sample.yaml`
+
+### 使い方
+
+- `config/samples/app.api-paper-dry-run.sample.yaml` など用途に合うサンプルを選び、内容を確認して `config/app.yaml` に反映してください。
+- APIパスワードは YAML に書かず、環境変数に設定してください。
+- paper 用は `KABU_API_PASSWORD_PAPER`、live 用は `KABU_API_PASSWORD_LIVE` を使ってください。
+- `token_env_name` は参照する環境変数名であり、実パスワードそのものではありません。
+
+### 実行例
+
+paper 検証 API の例:
+
+- `python main.py api-order-precheck --symbol 1321 --quantity 1`
+- `python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1`
+
+live 本番 API の注意:
+
+- live サンプルは実注文が市場へ送信される可能性があります。
+- 実行前に `trade_symbols` / `max_order_quantity` / `kabu_api_environment` を必ず確認してください。

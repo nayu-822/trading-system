@@ -1,0 +1,31 @@
+# バックテストまたは検証ロジック確認用の安全寄りサンプルです。
+# API 接続・API 注文は行わず、kabu ステーション起動も不要です。
+# このファイルは自動参照されません。内容を確認して config/app.yaml へ反映してください。
+
+mode: mock
+trading_mode: paper
+live_enabled: false
+data_source_mode: csv
+log_level: INFO
+rest_poll_interval_sec: 5
+push_enabled: false
+max_order_quantity: 1
+trade_symbols:
+  - "1306"
+  - "1321"
+  - "1570"
+position_reconciliation_enabled: true
+position_average_price_tolerance: 0.01
+kabu_api_environment: paper
+api_timeout_sec: 5
+token_env_name: KABU_API_PASSWORD_PAPER
+
+# CSV やバックテスト用データの配置先は既存の実行方法に合わせて別途調整してください。
+snapshot_enabled: false
+snapshot_dir: snapshots
+snapshot_interval_sec: 60
+snapshot_max_generations: 3
+snapshot_debounce_sec: 5
+recovery_enabled: false
+recovery_mode: manual
+startup_reconcile_enabled: false

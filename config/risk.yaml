@@ -1,12 +1,38 @@
+# リスク管理の既定設定です。
+# 実運用・検証とも、数量と損失許容幅は小さめから始めてください。
+
+# 1 日の最大許容損失額です。
 max_daily_loss: 10000
+
+# 連続損失回数の上限です。超えた場合は取引停止の判断材料になります。
 max_consecutive_losses: 3
+
+# 停止解除のために必要な連続勝ち数です。
 resume_consecutive_wins: 2
+
+# 同時保有建玉数の上限です。
 max_positions: 3
+
+# 1 銘柄あたりの最大保有数量です。
 max_position_per_symbol: 1000
+
+# 想定口座資産額です。配分やドローダウン計算の基準になります。
 account_equity: 1000000
+
+# 最大許容ドローダウン額です。
 max_drawdown: 50000
+
+# 強制停止系の安全機構を有効化するかどうかです。
 kill_switch_enabled: true
+
+# API エラー許容回数です。超過時は停止判断につながります。
 api_error_limit: 5
+
+# 取引時間帯の開始時刻です。
 trading_start_time: "09:00"
+
+# 取引時間帯の終了時刻です。
 trading_end_time: "15:00"
+
+# 注文タイムアウト秒です。
 order_timeout_sec: 30

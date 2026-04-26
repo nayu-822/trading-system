@@ -1,9 +1,28 @@
+# 戦略の既定設定です。
+# 銘柄ごとの strategy_params_override がない場合に、この値が使われます。
+
+# 各銘柄で strategy を切り替えたときの既定戦略です。
+# 指定値:
+#   auto: 実装側の自動選択ロジックを使います。
+#   trend: 移動平均ベースのトレンド戦略を使います。
+#   range: レンジ戦略を使います。
 default_strategy: auto
+
 parameters:
+  # トレンド戦略の既定パラメータです。
+  # short_window < long_window を維持してください。
   trend:
+    # 短期移動平均の期間です。短くすると反応が速くなります。
     short_window: 5
+    # 長期移動平均の期間です。短期より大きい値を指定します。
     long_window: 25
+
+  # レンジ戦略の既定パラメータです。
   range:
+    # 判定に使う価格履歴本数です。
     window: 20
+
+  # auto 戦略の有効化設定です。
   auto:
+    # true の場合、銘柄設定や実装の自動選択ロジックを使います。
     enabled: true
