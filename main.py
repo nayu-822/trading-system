@@ -1,4 +1,5 @@
 import logging
+import os
 import json
 import sys
 from dataclasses import dataclass, field
@@ -613,6 +614,53 @@ class ApplicationRuntime:
             ok=is_paper_environment,
             message="ok" if is_paper_environment else "kabu_api_environment must be paper",
         )
+        token_env_name_is_paper = (
+            self.config.app.kabu_api.token_env_name == "KABU_API_PASSWORD_PAPER"
+        )
+        self._append_check(
+            payload=payload,
+            name="token_env_name_is_paper",
+            ok=token_env_name_is_paper,
+            message=(
+                "ok"
+                if token_env_name_is_paper
+                else "paper検証APIでは token_env_name に KABU_API_PASSWORD_PAPER を指定してください"
+            ),
+        )
+        token_env_exists = bool(
+            os.environ.get(self.config.app.kabu_api.token_env_name, "")
+        )
+        self._append_check(
+            payload=payload,
+            name="token_env_exists",
+            ok=token_env_exists,
+            message=(
+                "ok"
+                if token_env_exists
+                else f"環境変数 {self.config.app.kabu_api.token_env_name} が設定されていません"
+            ),
+        )
+        trading_mode_is_live = self.config.app.trading_mode == TradingMode.LIVE
+        self._append_check(
+            payload=payload,
+            name="trading_mode_is_live",
+            ok=trading_mode_is_live,
+            message="ok" if trading_mode_is_live else "trading_mode must be live",
+        )
+        live_enabled_is_true = self.config.app.live_enabled
+        self._append_check(
+            payload=payload,
+            name="live_enabled_is_true",
+            ok=live_enabled_is_true,
+            message="ok" if live_enabled_is_true else "live_enabled must be true",
+        )
+        data_source_mode_is_api = self.config.app.data_source_mode == DataSourceMode.API
+        self._append_check(
+            payload=payload,
+            name="data_source_mode_is_api",
+            ok=data_source_mode_is_api,
+            message="ok" if data_source_mode_is_api else "data_source_mode must be api",
+        )
         is_paper_port = _is_paper_api_base_url(self.config.app.kabu_api.base_url)
         self._append_check(
             payload=payload,
@@ -636,6 +684,34 @@ class ApplicationRuntime:
                 "ok"
                 if quantity_valid
                 else "quantity must be between 1 and max_order_quantity"
+            ),
+        )
+        lot_unit = self._resolve_api_order_precheck_lot_unit(symbol)
+        quantity_matches_lot_unit = lot_unit is None or (
+            quantity > 0 and quantity % lot_unit == 0
+        )
+        self._append_check(
+            payload=payload,
+            name="quantity_matches_lot_unit",
+            ok=quantity_matches_lot_unit,
+            message=(
+                "ok"
+                if quantity_matches_lot_unit
+                else f"{symbol} の売買単位は {lot_unit} です"
+            ),
+        )
+        safe_quantity = self._resolve_api_order_precheck_safe_quantity(symbol)
+        quantity_is_safe_for_symbol = (
+            safe_quantity is None or (quantity > 0 and quantity <= safe_quantity)
+        )
+        self._append_check(
+            payload=payload,
+            name="quantity_is_safe_for_symbol",
+            ok=quantity_is_safe_for_symbol,
+            message=(
+                "ok"
+                if quantity_is_safe_for_symbol
+                else f"{symbol} の検証数量は {safe_quantity} を推奨しています"
             ),
         )
         not_halted = not halt_state.is_halted
@@ -753,6 +829,38 @@ class ApplicationRuntime:
         except Exception as error:
             return False, f"preflight check failed: {error}"
         return True, "ok"
+
+    def _resolve_api_order_precheck_lot_unit(self, symbol: str) -> int | None:
+        """api-order-precheck 用の売買単位を返す。
+
+        Args:
+            symbol: 確認対象銘柄コード。
+
+        Returns:
+            int | None: 判定に使う売買単位。未設定時は None。
+        """
+
+        symbol_config = next(
+            (
+                item
+                for item in self.config.symbols
+                if item.code == symbol and item.enabled and item.lot_min > 0
+            ),
+            None,
+        )
+        return symbol_config.lot_min if symbol_config is not None else None
+
+    def _resolve_api_order_precheck_safe_quantity(self, symbol: str) -> int | None:
+        """api-order-precheck 用の推奨検証数量を返す。
+
+        Args:
+            symbol: 確認対象銘柄コード。
+
+        Returns:
+            int | None: 推奨検証数量。未設定時は None。
+        """
+
+        return self._resolve_api_order_precheck_lot_unit(symbol)
 
     def run_api_order_dry_run(
         self,

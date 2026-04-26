@@ -122,12 +122,30 @@ def _resolve_api_order_precheck_next_action(payload: dict[str, Any]) -> list[str
     }
     if "environment_is_paper" in failed_checks:
         actions.append("config/app.yaml の kabu_api_environment を paper にしてください")
+    if "token_env_name_is_paper" in failed_checks:
+        actions.append(
+            "config/app.yaml の token_env_name を KABU_API_PASSWORD_PAPER にしてください"
+        )
+    if "token_env_exists" in failed_checks:
+        actions.append(
+            'PowerShellで $env:KABU_API_PASSWORD_PAPER="検証用APIパスワード" を設定してください'
+        )
+    if "trading_mode_is_live" in failed_checks:
+        actions.append("config/app.yaml の trading_mode を live にしてください")
+    if "live_enabled_is_true" in failed_checks:
+        actions.append("config/app.yaml の live_enabled を true にしてください")
+    if "data_source_mode_is_api" in failed_checks:
+        actions.append("config/app.yaml の data_source_mode を api にしてください")
     if "base_url_is_paper_port" in failed_checks:
         actions.append("base_url が検証PORT 18081 を向いているか確認してください")
     if "symbol_allowed" in failed_checks:
         actions.append("config/app.yaml の trade_symbols を確認してください")
     if "quantity_valid" in failed_checks:
         actions.append("数量が 1以上 max_order_quantity 以下か確認してください")
+    if "quantity_matches_lot_unit" in failed_checks:
+        actions.append("指定銘柄の売買単位に合う数量を指定してください")
+    if "quantity_is_safe_for_symbol" in failed_checks:
+        actions.append("検証用の推奨数量に変更してください")
     if "not_halted" in failed_checks:
         actions.append(
             "halt-status で停止理由を確認し、必要なら原因調査後に resume してください"

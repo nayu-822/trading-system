@@ -520,7 +520,11 @@ def test_main_api_order_precheck_outputs_json(monkeypatch) -> None:
             "is_halted": False,
             "reason": "",
             "message": "ok",
-            "checks": [{"name": "environment_is_paper", "ok": True, "message": "ok"}],
+            "checks": [
+                {"name": "environment_is_paper", "ok": True, "message": "ok"},
+                {"name": "token_env_name_is_paper", "ok": True, "message": "ok"},
+                {"name": "token_env_exists", "ok": True, "message": "ok"},
+            ],
             "errors": [],
             "next_action": ["api-order-dry-run を実行できます"],
         },
@@ -542,6 +546,7 @@ def test_main_api_order_precheck_outputs_json(monkeypatch) -> None:
     assert exit_code == 0
     assert fake_runtime.api_order_precheck_calls == [("1321", "BUY", 1)]
     assert '"command": "api-order-precheck"' in output.getvalue()
+    assert '"token_env_name_is_paper"' in output.getvalue()
     assert '"next_action": ["api-order-dry-run を実行できます"]' in output.getvalue()
 
 
@@ -807,6 +812,7 @@ def test_operation_guide_mentions_api_order_precheck() -> None:
     assert "api-order-precheck" in guide
     assert "api-order-dry-run 実行前" in guide
     assert "注文は送信しません" in guide
+    assert "KABU_API_PASSWORD_PAPER" in guide
 
 
 class _FakeRuntime:

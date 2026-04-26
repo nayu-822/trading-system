@@ -751,6 +751,10 @@ def test_runtime_api_order_precheck_returns_ok_for_paper_environment(monkeypatch
         snapshot_name="api_order_precheck_ok",
         trading_mode=TradingMode.LIVE,
         kabu_api_environment=app_main.KabuApiEnvironment.PAPER,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
     )
 
     payload = runtime.run_api_order_precheck(
@@ -772,6 +776,10 @@ def test_runtime_api_order_precheck_rejects_live_environment(monkeypatch) -> Non
         snapshot_name="api_order_precheck_live",
         trading_mode=TradingMode.LIVE,
         kabu_api_environment=app_main.KabuApiEnvironment.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
     )
 
     payload = runtime.run_api_order_precheck(
@@ -789,6 +797,11 @@ def test_runtime_api_order_precheck_rejects_live_port_base_url(monkeypatch) -> N
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_live_port",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
     )
     runtime.config = replace(
         runtime.config,
@@ -813,6 +826,11 @@ def test_runtime_api_order_precheck_rejects_symbol_outside_trade_symbols(monkeyp
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_symbol_ng",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
     )
 
     payload = runtime.run_api_order_precheck(
@@ -830,6 +848,11 @@ def test_runtime_api_order_precheck_rejects_zero_quantity(monkeypatch) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_zero_quantity",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
     )
 
     payload = runtime.run_api_order_precheck(
@@ -850,6 +873,11 @@ def test_runtime_api_order_precheck_rejects_quantity_over_max_order_quantity(
         monkeypatch,
         snapshot_name="api_order_precheck_over_quantity",
         max_order_quantity=1,
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
     )
 
     payload = runtime.run_api_order_precheck(
@@ -866,6 +894,11 @@ def test_runtime_api_order_precheck_rejects_when_halted(monkeypatch) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_halted",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
     )
     assert runtime.trading_process.risk_manager is not None
     runtime.trading_process.risk_manager.halt_trading(
@@ -888,6 +921,11 @@ def test_runtime_api_order_precheck_rejects_when_position_fetch_fails(monkeypatc
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_position_fetch_ng",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
         resource_options={"position_fetch_error": RuntimeError("position fetch failed")},
     )
 
@@ -908,6 +946,11 @@ def test_runtime_api_order_precheck_rejects_when_order_status_fetch_fails(monkey
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_order_status_ng",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
         resource_options={"order_status_fetch_error": RuntimeError("order status fetch failed")},
     )
 
@@ -925,6 +968,11 @@ def test_runtime_api_order_precheck_returns_api_guidance_when_preflight_fails(mo
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_preflight_ng",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
         resource_options={"open_orders_exist": True},
     )
 
@@ -937,6 +985,265 @@ def test_runtime_api_order_precheck_returns_api_guidance_when_preflight_fails(mo
     assert payload["ok"] is False
     assert any(check["name"] == "preflight_check" and not check["ok"] for check in payload["checks"])
     assert "kabuステーションを検証モードで起動し、API接続を確認してください" in payload["next_action"]
+
+
+def test_runtime_api_order_precheck_accepts_paper_token_env_name(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_precheck_token_name_ok",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
+    )
+
+    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert any(
+        check["name"] == "token_env_name_is_paper" and check["ok"]
+        for check in payload["checks"]
+    )
+
+
+def test_runtime_api_order_precheck_rejects_live_token_env_name(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_precheck_token_name_ng",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_LIVE",
+        token_env_value="dummy-live-password",
+    )
+
+    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert payload["ok"] is False
+    assert any(
+        check["name"] == "token_env_name_is_paper" and not check["ok"]
+        for check in payload["checks"]
+    )
+    assert (
+        "config/app.yaml の token_env_name を KABU_API_PASSWORD_PAPER にしてください"
+        in payload["next_action"]
+    )
+
+
+def test_runtime_api_order_precheck_rejects_when_token_env_is_missing(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_precheck_token_env_missing",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value=None,
+    )
+
+    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert payload["ok"] is False
+    assert any(
+        check["name"] == "token_env_exists" and not check["ok"]
+        for check in payload["checks"]
+    )
+    assert (
+        'PowerShellで $env:KABU_API_PASSWORD_PAPER="検証用APIパスワード" を設定してください'
+        in payload["next_action"]
+    )
+
+
+def test_runtime_api_order_precheck_accepts_when_token_env_is_set(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_precheck_token_env_ok",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
+    )
+
+    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert any(
+        check["name"] == "token_env_exists" and check["ok"]
+        for check in payload["checks"]
+    )
+
+
+def test_runtime_api_order_precheck_rejects_paper_trading_mode(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_precheck_trading_mode_ng",
+        trading_mode=TradingMode.PAPER,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
+    )
+
+    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert any(
+        check["name"] == "trading_mode_is_live" and not check["ok"]
+        for check in payload["checks"]
+    )
+
+
+def test_runtime_api_order_precheck_rejects_when_live_enabled_is_false(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_precheck_live_enabled_ng",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=False,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
+    )
+
+    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert any(
+        check["name"] == "live_enabled_is_true" and not check["ok"]
+        for check in payload["checks"]
+    )
+
+
+def test_runtime_api_order_precheck_rejects_csv_data_source_mode(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_precheck_data_source_ng",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.CSV,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
+    )
+
+    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert any(
+        check["name"] == "data_source_mode_is_api" and not check["ok"]
+        for check in payload["checks"]
+    )
+
+
+def test_runtime_api_order_precheck_rejects_1306_quantity_not_matching_lot_unit(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_precheck_1306_lot_ng",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
+    )
+
+    payload = runtime.run_api_order_precheck(symbol="1306", side=OrderSide.BUY, quantity=1)
+
+    assert any(
+        check["name"] == "quantity_matches_lot_unit" and not check["ok"]
+        for check in payload["checks"]
+    )
+    assert "指定銘柄の売買単位に合う数量を指定してください" in payload["next_action"]
+
+
+def test_runtime_api_order_precheck_accepts_1306_quantity_matching_lot_unit(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_precheck_1306_lot_ok",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
+    )
+
+    payload = runtime.run_api_order_precheck(symbol="1306", side=OrderSide.BUY, quantity=10)
+
+    assert any(
+        check["name"] == "quantity_matches_lot_unit" and check["ok"]
+        for check in payload["checks"]
+    )
+
+
+def test_runtime_api_order_precheck_accepts_safe_quantity_for_1321(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_precheck_1321_safe_ok",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
+    )
+
+    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert any(
+        check["name"] == "quantity_is_safe_for_symbol" and check["ok"]
+        for check in payload["checks"]
+    )
+
+
+def test_runtime_api_order_precheck_rejects_unsafe_quantity_for_1321(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_precheck_1321_safe_ng",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
+    )
+
+    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=10)
+
+    assert any(
+        check["name"] == "quantity_is_safe_for_symbol" and not check["ok"]
+        for check in payload["checks"]
+    )
+    assert "検証用の推奨数量に変更してください" in payload["next_action"]
+
+
+def test_runtime_api_order_precheck_accepts_safe_quantity_for_1570(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_precheck_1570_safe_ok",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
+    )
+
+    payload = runtime.run_api_order_precheck(symbol="1570", side=OrderSide.BUY, quantity=1)
+
+    assert any(
+        check["name"] == "quantity_is_safe_for_symbol" and check["ok"]
+        for check in payload["checks"]
+    )
+
+
+def test_runtime_api_order_precheck_rejects_unsafe_quantity_for_1570(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_precheck_1570_safe_ng",
+        trading_mode=TradingMode.LIVE,
+        data_source_mode=DataSourceMode.API,
+        live_enabled=True,
+        token_env_name="KABU_API_PASSWORD_PAPER",
+        token_env_value="dummy-paper-password",
+    )
+
+    payload = runtime.run_api_order_precheck(symbol="1570", side=OrderSide.BUY, quantity=10)
+
+    assert any(
+        check["name"] == "quantity_is_safe_for_symbol" and not check["ok"]
+        for check in payload["checks"]
+    )
 
 
 def test_runtime_api_order_dry_run_does_not_fail_with_not_live_guard(monkeypatch) -> None:
@@ -1216,11 +1523,15 @@ def _build_api_order_dry_run_runtime(
     trading_mode: TradingMode = TradingMode.LIVE,
     kabu_api_environment=app_main.KabuApiEnvironment.PAPER,
     max_order_quantity: int = 10,
+    data_source_mode: DataSourceMode = DataSourceMode.CSV,
+    live_enabled: bool = False,
+    token_env_name: str = "KABU_API_PASSWORD",
+    token_env_value: str | None = None,
     resource_options: dict[str, Any] | None = None,
 ):
     snapshot_dir = _test_dir(snapshot_name)
     config = _runtime_config(
-        data_source_mode=DataSourceMode.CSV,
+        data_source_mode=data_source_mode,
         snapshot_dir=snapshot_dir,
     )
     config = replace(
@@ -1228,18 +1539,29 @@ def _build_api_order_dry_run_runtime(
         app=replace(
             config.app,
             trading_mode=trading_mode,
+            live_enabled=live_enabled,
             kabu_api=replace(
                 config.app.kabu_api,
                 environment=kabu_api_environment,
+                token_env_name=token_env_name,
             ),
             max_order_quantity=max_order_quantity,
             trade_symbols=("1306", "1321", "1570"),
         ),
     )
+    if token_env_value is None:
+        monkeypatch.delenv(token_env_name, raising=False)
+    else:
+        monkeypatch.setenv(token_env_name, token_env_value)
     monkeypatch.setattr(
         app_main,
         "_build_external_data_process",
         _fake_external_builder(_FakeExternalDataProcess(events=())),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_position_reconciliation_service",
+        lambda config, logger: None,
     )
     monkeypatch.setattr(
         app_main,

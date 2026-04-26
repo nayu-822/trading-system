@@ -246,6 +246,11 @@ python main.py api-order-dry-run --symbol 1306 --side BUY --quantity 10
 - 検証 API 18081 専用です
 - 本番 API 18080 を向いている場合は NG になります
 - `kabu_api_environment=paper`、`trade_symbols`、数量、停止状態、API 接続、建玉取得、注文状態取得を読み取り専用で確認します
+- `token_env_name` が `KABU_API_PASSWORD_PAPER` になっているか確認します
+- 環境変数 `KABU_API_PASSWORD_PAPER` が設定済みか確認します
+- paper 検証API向けに `trading_mode=live` / `live_enabled=true` / `data_source_mode=api` / `kabu_api_environment=paper` の組み合わせを確認します
+- `1306` は数量 `10`、`1321` / `1570` は数量 `1` を推奨し、売買単位と安全数量に合わない場合は NG にします
+- precheck が NG の場合は `api-order-dry-run` を実行しないでください
 
 ```bash
 python main.py api-order-precheck --symbol 1321 --quantity 1
@@ -361,6 +366,7 @@ live 本番 API の注意:
   - `position_average_price_tolerance: 0.01`
 - `kabu_api_environment=paper` は検証PORT 18081 です。
 - `api-order-precheck` / `api-order-dry-run` で確認します。
+- `api-order-precheck` では `token_env_name=KABU_API_PASSWORD_PAPER`、環境変数 `KABU_API_PASSWORD_PAPER` の設定有無、`1306=10` / `1321=1` / `1570=1` の数量妥当性も確認します。
 
 ### 本番API少額確認用の設定
 
@@ -411,6 +417,11 @@ paper 検証 API の場合:
 
 - `python main.py api-order-precheck --symbol 1321 --quantity 1`
 - `python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1`
+
+補足:
+
+- `api-order-precheck` が NG の場合は、`next_action` と `errors` を確認して設定を修正してから再実行してください。
+- paper 検証APIでは `KABU_API_PASSWORD_PAPER` を使い、PowerShell で先に環境変数を設定してください。
 
 live 本番 API の場合:
 
