@@ -992,6 +992,15 @@ def test_resolve_git_commit_returns_unknown_on_failure(monkeypatch) -> None:
     assert app_main._resolve_git_commit() == "unknown"
 
 
+def test_resolve_git_commit_returns_unknown_on_timeout(monkeypatch) -> None:
+    def raise_timeout(*args, **kwargs):
+        raise app_main.subprocess.TimeoutExpired(cmd="git", timeout=2)
+
+    monkeypatch.setattr(app_main.subprocess, "run", raise_timeout)
+
+    assert app_main._resolve_git_commit() == "unknown"
+
+
 def test_build_command_config_summary_does_not_include_api_password_value(
     monkeypatch,
 ) -> None:
@@ -1020,6 +1029,44 @@ def test_write_cli_output_does_not_include_api_password_value(monkeypatch) -> No
     app_main._write_cli_output(payload, json_output=True)
 
     assert "super-secret-password" not in output.getvalue()
+
+
+def test_main_api_order_precheck_succeeds_even_when_git_commit_resolution_times_out(
+    monkeypatch,
+) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+
+    def raise_timeout(*args, **kwargs):
+        raise app_main.subprocess.TimeoutExpired(cmd="git", timeout=2)
+
+    monkeypatch.setattr(app_main.subprocess, "run", raise_timeout)
+    fake_runtime = _FakeRuntime(
+        halt_state=TradingHaltState(),
+        api_order_precheck_result=app_main._api_order_precheck_payload(
+            config=config,
+            symbol="1321",
+            side="BUY",
+            quantity=1,
+            halt_state=TradingHaltState(),
+        ),
+    )
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: fake_runtime,
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        ["api-order-precheck", "--symbol", "1321", "--quantity", "1", "--json"]
+    )
+
+    assert exit_code == 0
+    assert '"git_commit": "unknown"' in output.getvalue()
 
 
 def test_operation_guide_mentions_api_order_dry_run_follow_up_steps() -> None:

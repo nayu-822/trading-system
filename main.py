@@ -2246,8 +2246,9 @@ def _resolve_git_commit() -> str:
             text=True,
             encoding="utf-8",
             cwd=Path(__file__).resolve().parent,
+            timeout=2,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
         return "unknown"
     commit = result.stdout.strip()
     return commit or "unknown"
