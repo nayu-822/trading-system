@@ -24,12 +24,26 @@ class TrendStrategy:
     long_window: int = 25
 
     def __post_init__(self) -> None:
-        """生成時に移動平均期間の妥当性を検証する。"""
+        """生成時に移動平均期間の妥当性を検証する。
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: short_window / long_window が戦略要件を満たさない場合。
+        """
 
         self._validate_windows()
 
     def on_market_data(self, event: MarketDataUpdated) -> SignalPayload | None:
-        """価格履歴から移動平均を計算し、BUY / SELL を判定する。"""
+        """価格履歴から移動平均を計算し、BUY / SELL を判定する。
+
+        Args:
+            event: 最新の市場価格を含むイベント。
+
+        Returns:
+            SignalPayload | None: シグナルが確定した場合はペイロード、未確定時は None。
+        """
 
         current_price = event.payload.price
         self.state.last_price = current_price
@@ -60,7 +74,14 @@ class TrendStrategy:
         )
 
     def reset(self, symbol: str) -> None:
-        """指定銘柄の戦略状態を初期化する。"""
+        """指定銘柄の戦略状態を初期化する。
+
+        Args:
+            symbol: 初期化対象の銘柄コード。
+
+        Returns:
+            None
+        """
 
         if self.state.symbol == symbol:
             self.state.prices.clear()
@@ -68,7 +89,14 @@ class TrendStrategy:
             self.state.last_signal_type = None
 
     def _validate_windows(self) -> None:
-        """移動平均期間が戦略要件を満たすか検証する。"""
+        """移動平均期間が戦略要件を満たすか検証する。
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: short_window / long_window が戦略要件を満たさない場合。
+        """
 
         if self.short_window < 1:
             raise ValueError("short_window は1以上で指定してください")
@@ -78,14 +106,28 @@ class TrendStrategy:
             raise ValueError("short_window は long_window より小さく指定してください")
 
     def _append_price(self, price: float) -> None:
-        """長期移動平均に必要な本数まで価格履歴を保持する。"""
+        """長期移動平均に必要な本数まで価格履歴を保持する。
+
+        Args:
+            price: 追加する現在価格。
+
+        Returns:
+            None
+        """
 
         self.state.prices.append(price)
         if len(self.state.prices) > self.long_window:
             self.state.prices.pop(0)
 
     def _calculate_moving_average(self, window: int) -> float:
-        """直近 window 本の単純移動平均を返す。"""
+        """直近 window 本の単純移動平均を返す。
+
+        Args:
+            window: 平均計算に使用する価格本数。
+
+        Returns:
+            float: 指定本数に対する単純移動平均値。
+        """
 
         target_prices = self.state.prices[-window:]
         return sum(target_prices) / window
@@ -95,7 +137,15 @@ class TrendStrategy:
         short_ma: float,
         long_ma: float,
     ) -> SignalType | None:
-        """短期平均と長期平均の関係から売買方向を判定する。"""
+        """短期平均と長期平均の関係から売買方向を判定する。
+
+        Args:
+            short_ma: 短期移動平均値。
+            long_ma: 長期移動平均値。
+
+        Returns:
+            SignalType | None: 売買方向が確定した場合は SignalType、同値時は None。
+        """
 
         if short_ma > long_ma:
             return SignalType.BUY
