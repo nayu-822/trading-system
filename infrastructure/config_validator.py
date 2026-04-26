@@ -14,7 +14,10 @@ class ConfigValidationError(Exception):
     """設定検証に失敗したことを表す例外。"""
 
 
-def validate_config(config: SystemConfig) -> None:
+def validate_config(
+    config: SystemConfig,
+    allow_missing_api_password: bool = False,
+) -> None:
     """構成項目と値の妥当性を検証する。
     Args:
         config: 検証対象のシステム設定。
@@ -24,13 +27,19 @@ def validate_config(config: SystemConfig) -> None:
         ConfigValidationError: 設定値が不正な場合。
     """
 
-    _validate_app_config(config)
+    _validate_app_config(
+        config=config,
+        allow_missing_api_password=allow_missing_api_password,
+    )
     _validate_symbols(config)
     _validate_strategy(config)
     _validate_risk(config)
 
 
-def _validate_app_config(config: SystemConfig) -> None:
+def _validate_app_config(
+    config: SystemConfig,
+    allow_missing_api_password: bool = False,
+) -> None:
     """app 設定の妥当性を検証する。
     Args:
         config: 検証対象のシステム設定。
@@ -57,8 +66,10 @@ def _validate_app_config(config: SystemConfig) -> None:
         raise ConfigValidationError("live mode requires api data_source_mode")
     if config.app.trading_mode == TradingMode.LIVE and not config.app.live_enabled:
         raise ConfigValidationError("live mode requires live_enabled=true")
-    if config.app.data_source_mode == DataSourceMode.API and not os.environ.get(
-        config.app.kabu_api.token_env_name
+    if (
+        not allow_missing_api_password
+        and config.app.data_source_mode == DataSourceMode.API
+        and not os.environ.get(config.app.kabu_api.token_env_name)
     ):
         raise ConfigValidationError(
             f"API mode requires env: {config.app.kabu_api.token_env_name}"

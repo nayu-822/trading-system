@@ -597,6 +597,95 @@ def test_main_api_order_precheck_outputs_next_action_on_failure(monkeypatch) -> 
     assert "config/app.yaml の kabu_api_environment を paper にしてください" in output.getvalue()
 
 
+def test_main_api_order_precheck_returns_formatted_result_when_api_password_is_missing(
+    monkeypatch,
+) -> None:
+    base_config = load_config(Path("config"))
+    config = replace(
+        base_config,
+        app=replace(
+            base_config.app,
+            data_source_mode=app_main.DataSourceMode.API,
+            trading_mode=app_main.TradingMode.LIVE,
+            live_enabled=True,
+            kabu_api=replace(
+                base_config.app.kabu_api,
+                environment=app_main.KabuApiEnvironment.PAPER,
+                token_env_name="KABU_API_PASSWORD_PAPER",
+                base_url="http://localhost:18081/kabusapi",
+            ),
+        ),
+    )
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: (_ for _ in ()).throw(
+            RuntimeError("api init failed")
+        ),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["api-order-precheck", "--symbol", "1321", "--quantity", "1"])
+
+    assert exit_code == 1
+    assert "ok: False" in output.getvalue()
+    assert "token_env_exists: NG" in output.getvalue()
+    assert "環境変数 KABU_API_PASSWORD_PAPER が設定されていません" in output.getvalue()
+    assert (
+        'PowerShellで $env:KABU_API_PASSWORD_PAPER="検証用APIパスワード" を設定してください'
+        in output.getvalue()
+    )
+
+
+def test_main_api_order_precheck_outputs_json_when_api_password_is_missing(
+    monkeypatch,
+) -> None:
+    base_config = load_config(Path("config"))
+    config = replace(
+        base_config,
+        app=replace(
+            base_config.app,
+            data_source_mode=app_main.DataSourceMode.API,
+            trading_mode=app_main.TradingMode.LIVE,
+            live_enabled=True,
+            kabu_api=replace(
+                base_config.app.kabu_api,
+                environment=app_main.KabuApiEnvironment.PAPER,
+                token_env_name="KABU_API_PASSWORD_PAPER",
+                base_url="http://localhost:18081/kabusapi",
+            ),
+        ),
+    )
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: (_ for _ in ()).throw(
+            RuntimeError("api init failed")
+        ),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        ["api-order-precheck", "--symbol", "1321", "--quantity", "1", "--json"]
+    )
+
+    assert exit_code == 1
+    assert '"ok": false' in output.getvalue()
+    assert '"token_env_exists"' in output.getvalue()
+    assert '"errors": [' in output.getvalue()
+    assert '"next_action": [' in output.getvalue()
+
+
 def test_main_api_order_dry_run_returns_exit_code_one_on_api_error(monkeypatch) -> None:
     config = load_config(Path("config"))
     fake_logger = FakeLogger()
@@ -796,6 +885,71 @@ def test_main_api_order_dry_run_runtime_init_failure_with_invalid_quantity_outpu
     assert "api init failed" in output.getvalue()
     assert "next_action:" in output.getvalue()
     assert "log_hint:" in output.getvalue()
+
+
+def test_main_api_order_dry_run_still_fails_when_api_password_is_missing(
+    monkeypatch,
+) -> None:
+    base_config = load_config(Path("config"))
+    config = replace(
+        base_config,
+        app=replace(
+            base_config.app,
+            data_source_mode=app_main.DataSourceMode.API,
+            trading_mode=app_main.TradingMode.LIVE,
+            live_enabled=True,
+            kabu_api=replace(
+                base_config.app.kabu_api,
+                environment=app_main.KabuApiEnvironment.PAPER,
+                token_env_name="KABU_API_PASSWORD_PAPER",
+                base_url="http://localhost:18081/kabusapi",
+            ),
+        ),
+    )
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        ["api-order-dry-run", "--symbol", "1321", "--side", "BUY", "--quantity", "1"]
+    )
+
+    assert exit_code == 1
+    assert "runtime initialization failed" in output.getvalue()
+    assert "KABU_API_PASSWORD_PAPER" in output.getvalue()
+
+
+def test_main_still_fails_on_normal_start_when_api_password_is_missing(
+    monkeypatch,
+) -> None:
+    base_config = load_config(Path("config"))
+    config = replace(
+        base_config,
+        app=replace(
+            base_config.app,
+            data_source_mode=app_main.DataSourceMode.API,
+            trading_mode=app_main.TradingMode.LIVE,
+            live_enabled=True,
+            kabu_api=replace(
+                base_config.app.kabu_api,
+                environment=app_main.KabuApiEnvironment.PAPER,
+                token_env_name="KABU_API_PASSWORD_PAPER",
+                base_url="http://localhost:18081/kabusapi",
+            ),
+        ),
+    )
+    fake_logger = FakeLogger()
+    monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+
+    exit_code = app_main.main([])
+
+    assert exit_code == 1
+    assert fake_logger.messages == ["application initialization failed"]
 
 
 def test_operation_guide_mentions_api_order_dry_run_follow_up_steps() -> None:
