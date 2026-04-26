@@ -1779,7 +1779,7 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(CONFIG_DIR)
         logger = setup_logger(config.app.log_level, process_name=EventSource.MAIN.value)
         if arguments:
-            if arguments[0] == "api-order-precheck":
+            if arguments[0] in {"api-order-precheck", "config-summary"}:
                 validate_config(config, allow_missing_api_password=True)
             return _run_operational_command(arguments, config=config, logger=logger)
         initialize_application(block_api=True)

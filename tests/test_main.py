@@ -1237,6 +1237,87 @@ def test_main_config_summary_outputs_json(monkeypatch) -> None:
     assert '"token_env_name": "' in output.getvalue()
 
 
+def test_main_config_summary_succeeds_when_api_password_is_missing(
+    monkeypatch,
+) -> None:
+    base_config = load_config(Path("config"))
+    config = replace(
+        base_config,
+        app=replace(
+            base_config.app,
+            data_source_mode=app_main.DataSourceMode.API,
+            trading_mode=app_main.TradingMode.LIVE,
+            live_enabled=True,
+            kabu_api=replace(
+                base_config.app.kabu_api,
+                environment=app_main.KabuApiEnvironment.PAPER,
+                token_env_name="KABU_API_PASSWORD_PAPER",
+                base_url="http://localhost:18081/kabusapi",
+            ),
+        ),
+    )
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: (_ for _ in ()).throw(
+            AssertionError("runtime should not be built")
+        ),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["config-summary"])
+
+    assert exit_code == 1
+    assert "command: config-summary" in output.getvalue()
+    assert "token_env_name: KABU_API_PASSWORD_PAPER" in output.getvalue()
+    assert "token_env_exists: False" in output.getvalue()
+    assert "warnings:" in output.getvalue()
+    assert "環境変数 KABU_API_PASSWORD_PAPER" in output.getvalue()
+    assert "next_action:" in output.getvalue()
+    assert "$env:KABU_API_PASSWORD_PAPER" in output.getvalue()
+
+
+def test_main_config_summary_outputs_json_when_api_password_is_missing(
+    monkeypatch,
+) -> None:
+    base_config = load_config(Path("config"))
+    config = replace(
+        base_config,
+        app=replace(
+            base_config.app,
+            data_source_mode=app_main.DataSourceMode.API,
+            trading_mode=app_main.TradingMode.LIVE,
+            live_enabled=True,
+            kabu_api=replace(
+                base_config.app.kabu_api,
+                environment=app_main.KabuApiEnvironment.PAPER,
+                token_env_name="KABU_API_PASSWORD_PAPER",
+                base_url="http://localhost:18081/kabusapi",
+            ),
+        ),
+    )
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["config-summary", "--json"])
+
+    assert exit_code == 1
+    assert '"ok": false' in output.getvalue()
+    assert '"token_env_exists": false' in output.getvalue()
+    assert '"warnings": [' in output.getvalue()
+    assert '"next_action": [' in output.getvalue()
+    assert '"KABU_API_PASSWORD_PAPER"' in output.getvalue()
+
+
 def test_write_cli_output_does_not_include_api_password_value(monkeypatch) -> None:
     config = load_config(Path("config"))
     monkeypatch.setenv(config.app.kabu_api.token_env_name, "super-secret-password")
