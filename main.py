@@ -1979,7 +1979,18 @@ def _api_order_precheck_payload(
     quantity: int,
     halt_state: TradingHaltState | None = None,
 ) -> dict[str, Any]:
-    """api-order-precheck の初期 payload を生成する。"""
+    """api-order-precheck の初期 payload を生成する。
+
+    Args:
+        config: システム設定。
+        symbol: 対象銘柄コード。
+        side: 想定売買方向。
+        quantity: 想定数量。
+        halt_state: 現在の停止状態。
+
+    Returns:
+        dict[str, Any]: 事前確認結果用 payload。
+    """
 
     return api_order_precheck_cli._api_order_precheck_payload(
         config=config,
@@ -1998,7 +2009,19 @@ def _api_order_precheck_error_payload(
     side: str = "BUY",
     quantity: int = 0,
 ) -> dict[str, Any]:
-    """api-order-precheck の異常終了用 payload を生成する。"""
+    """api-order-precheck の異常終了用 payload を生成する。
+
+    Args:
+        config: システム設定。
+        message: エラーメッセージ。
+        halt_state: 現在の停止状態。
+        symbol: 対象銘柄コード。
+        side: 想定売買方向。
+        quantity: 想定数量。
+
+    Returns:
+        dict[str, Any]: 整形済みのエラーペイロード。
+    """
 
     return api_order_precheck_cli._api_order_precheck_error_payload(
         config=config,
@@ -2024,7 +2047,14 @@ def _finalize_api_order_dry_run_payload(payload: dict[str, Any]) -> dict[str, An
 
 
 def _finalize_api_order_precheck_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """api-order-precheck の表示用項目を補完する。"""
+    """api-order-precheck の表示用項目を補完する。
+
+    Args:
+        payload: 補完対象の payload。
+
+    Returns:
+        dict[str, Any]: 補完後の payload。
+    """
 
     return api_order_precheck_cli._finalize_api_order_precheck_payload(payload)
 
@@ -2107,13 +2137,27 @@ def _resolve_api_order_dry_run_log_hint(payload: dict[str, Any]) -> list[str]:
 
 
 def _resolve_api_order_precheck_next_action(payload: dict[str, Any]) -> list[str]:
-    """api-order-precheck ???????????"""
+    """api-order-precheck の次アクションを返す。
+
+    Args:
+        payload: 事前確認結果 payload。
+
+    Returns:
+        list[str]: 次に取るべき行動。
+    """
 
     return api_order_precheck_cli._resolve_api_order_precheck_next_action(payload)
 
 
 def _is_paper_api_base_url(base_url: str) -> bool:
-    """?? API ? base_url ???????"""
+    """検証 API 用 base_url かを判定する。
+
+    Args:
+        base_url: 判定対象 URL。
+
+    Returns:
+        bool: 18081 ポートを指していれば True。
+    """
 
     return api_order_precheck_cli._is_paper_api_base_url(base_url)
 
