@@ -2,9 +2,11 @@ import logging
 import json
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from threading import Event
 from typing import Any
+from uuid import uuid4
 
 from data_source.csv_loader import CsvMarketDataLoader
 from data_source.kabu_api_client import KabuApiClient, KabuApiError
@@ -15,12 +17,13 @@ from domain.enums import (
     EventSource,
     EventType,
     KabuApiEnvironment,
+    OrderSide,
     OrderStatus,
     StrategyType,
     TradingHaltReason,
     TradingMode,
 )
-from domain.events import EventFactory, SystemStartedPayload
+from domain.events import EventFactory, OrderStatusPayload, SystemStartedPayload
 from domain.models import (
     Order,
     RiskSymbolConfig,
@@ -62,6 +65,17 @@ DEFAULT_LOG_LEVEL = "INFO"
 
 class LiveOrderNotAllowedError(ValueError):
     """実注文が許可されていない組み合わせであることを示す例外。"""
+
+
+@dataclass(frozen=True)
+class ApiOrderDryRunResources:
+    """api-order-dry-run で利用する API 依存リソース。"""
+
+    order_status_repository: OrderStatusRepository
+    position_repository: PositionRepository
+    position_reconciliation_service: PositionReconciliationService
+    order_safety_validator: OrderSafetyValidator
+    order_gateway: LiveOrderGateway
 
 
 @dataclass
@@ -325,11 +339,21 @@ class ApplicationRuntime:
         rest_poller = getattr(self.external_data_process, "rest_poller", None)
         if rest_poller is None:
             return False
-        for symbol in (symbol.code for symbol in self.config.symbols if symbol.enabled):
+        return self._open_orders_match_repository(
+            order_status_repository=rest_poller.order_status_repository,
+            symbols=tuple(symbol.code for symbol in self.config.symbols if symbol.enabled),
+        )
+
+    def _open_orders_match_repository(
+        self,
+        order_status_repository: OrderStatusRepository,
+        symbols: tuple[str, ...],
+    ) -> bool:
+        for symbol in symbols:
             try:
                 api_orders = {
                     self._order_identity(order)
-                    for order in rest_poller.order_status_repository.get_open_orders(
+                    for order in order_status_repository.get_open_orders(
                         symbol=symbol,
                         force_refresh=True,
                     )
@@ -554,6 +578,392 @@ class ApplicationRuntime:
             "errors": errors,
         }
 
+    def run_api_order_dry_run(
+        self,
+        symbol: str,
+        side: OrderSide,
+        quantity: int,
+        price: float | None = None,
+    ) -> dict[str, Any]:
+        """検証 API 向けの単発注文フロー確認を実行する。
+
+        Args:
+            symbol: 対象銘柄コード。
+            side: 注文売買区分。
+            quantity: 注文数量。
+            price: 注文価格。未指定時は成行扱い。
+
+        Returns:
+            dict[str, Any]: CLI 出力向けの実行結果。
+        """
+
+        payload = self._api_order_dry_run_payload(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+        )
+        halt_state = self.get_trading_halt_state()
+        payload["is_halted"] = halt_state.is_halted
+        payload["reason"] = (
+            halt_state.reason.value if halt_state.reason is not None else ""
+        )
+        payload["message"] = halt_state.message
+
+        if self.config.app.kabu_api.environment != KabuApiEnvironment.PAPER:
+            self._append_check(
+                payload=payload,
+                name="kabu_api_environment",
+                ok=False,
+                message="kabu_api_environment must be paper",
+            )
+            self._finalize_api_order_dry_run_log(payload)
+            return payload
+        self._append_check(
+            payload=payload,
+            name="kabu_api_environment",
+            ok=True,
+            message="ok",
+        )
+        if halt_state.is_halted:
+            self._append_check(
+                payload=payload,
+                name="halt_status",
+                ok=False,
+                message="trading is halted",
+            )
+            self._finalize_api_order_dry_run_log(payload)
+            return payload
+        self._append_check(
+            payload=payload,
+            name="halt_status",
+            ok=True,
+            message="ok",
+        )
+        if symbol not in self.config.app.trade_symbols:
+            self._append_check(
+                payload=payload,
+                name="symbol",
+                ok=False,
+                message="symbol is not in trade_symbols",
+            )
+            self._finalize_api_order_dry_run_log(payload)
+            return payload
+        self._append_check(
+            payload=payload,
+            name="symbol",
+            ok=True,
+            message="ok",
+        )
+        if quantity < 1:
+            self._append_check(
+                payload=payload,
+                name="quantity",
+                ok=False,
+                message="quantity must be >= 1",
+            )
+            self._finalize_api_order_dry_run_log(payload)
+            return payload
+        if quantity > self.config.app.max_order_quantity:
+            self._append_check(
+                payload=payload,
+                name="quantity",
+                ok=False,
+                message="quantity exceeds max_order_quantity",
+            )
+            self._finalize_api_order_dry_run_log(payload)
+            return payload
+        self._append_check(
+            payload=payload,
+            name="quantity",
+            ok=True,
+            message="ok",
+        )
+
+        try:
+            resources = _build_api_order_dry_run_resources(
+                config=self.config,
+                logger=self.logger,
+                trading_process=self.trading_process,
+            )
+        except Exception as error:
+            self._append_check(
+                payload=payload,
+                name="api_resources",
+                ok=False,
+                message=f"api resource initialization failed: {error}",
+            )
+            self._finalize_api_order_dry_run_log(payload)
+            return payload
+
+        if not self._run_api_order_dry_run_preflight(
+            symbol=symbol,
+            payload=payload,
+            resources=resources,
+        ):
+            self._finalize_api_order_dry_run_log(payload)
+            return payload
+
+        order = Order(
+            order_id=str(uuid4()),
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            order_type=self.trading_process.order_type,
+            is_exit=False,
+            status=OrderStatus.REQUESTED,
+            price=price,
+            remaining_quantity=quantity,
+        )
+        decision = resources.order_safety_validator.evaluate_order(order)
+        self._append_check(
+            payload=payload,
+            name="order_safety",
+            ok=decision.allowed,
+            message=decision.reason or "ok",
+        )
+        if not decision.allowed:
+            self._finalize_api_order_dry_run_log(payload)
+            return payload
+
+        state = self.trading_process.get_state(symbol)
+        state.orders.append(order)
+        started_temporarily = False
+        if not self.trading_process._subscribed:
+            self.trading_process.start()
+            started_temporarily = True
+        try:
+            status_events = resources.order_gateway.place_order(
+                order=order,
+                timestamp=self.clock.now(),
+            )
+            for status_event in status_events:
+                self.event_bus.publish(status_event)
+
+            payload["order_id"] = order.external_order_id or order.order_id
+            synced_order = resources.order_status_repository.get_order_status(
+                order_id=payload["order_id"],
+                force_refresh=True,
+            )
+            if synced_order is None:
+                self._append_check(
+                    payload=payload,
+                    name="order_status_sync",
+                    ok=False,
+                    message="order status is not found after order",
+                )
+                return payload
+            self._append_check(
+                payload=payload,
+                name="order_status_sync",
+                ok=True,
+                message="ok",
+            )
+            self.event_bus.publish(
+                self._build_order_status_event_from_repository(
+                    order=order,
+                    synced_order=synced_order,
+                )
+            )
+            payload["order_id"] = synced_order.external_order_id or synced_order.order_id
+            payload["order_status"] = synced_order.status.value
+            payload["filled_quantity"] = synced_order.filled_quantity
+            payload["remaining_quantity"] = synced_order.remaining_quantity
+
+            try:
+                resources.position_reconciliation_service.reconcile(
+                    symbol=symbol,
+                    internal_position=self.trading_process.get_state(symbol).position,
+                )
+            except Exception as error:
+                self._append_check(
+                    payload=payload,
+                    name="position_reconciliation",
+                    ok=False,
+                    message=f"position reconciliation failed: {error}",
+                )
+                return payload
+            self._append_check(
+                payload=payload,
+                name="position_reconciliation",
+                ok=True,
+                message="ok",
+            )
+            api_position = resources.position_repository.get_position(
+                symbol=symbol,
+                force_refresh=True,
+            )
+            internal_position = self.trading_process.get_state(symbol).position
+            payload["position"] = {
+                "symbol": symbol,
+                "quantity": api_position.quantity,
+                "average_price": api_position.average_price,
+            }
+            payload["position_quantity"] = (
+                internal_position.quantity if internal_position is not None else 0
+            )
+            payload["ok"] = True
+            payload["message"] = "ok"
+            payload["errors"] = []
+            return payload
+        except Exception as error:
+            if order in state.orders:
+                state.orders.remove(order)
+            payload["message"] = str(error)
+            payload["errors"] = [str(error)]
+            return payload
+        finally:
+            self._finalize_api_order_dry_run_log(payload)
+            if started_temporarily:
+                self.trading_process.stop()
+
+    def _run_api_order_dry_run_preflight(
+        self,
+        symbol: str,
+        payload: dict[str, Any],
+        resources: ApiOrderDryRunResources,
+    ) -> bool:
+        """api-order-dry-run の事前確認を実行する。"""
+
+        try:
+            resources.order_status_repository.list_orders(force_refresh=True)
+        except Exception as error:
+            self._append_check(
+                payload=payload,
+                name="preflight_order_status_sync",
+                ok=False,
+                message=f"order status sync failed: {error}",
+            )
+            return False
+        self._append_check(
+            payload=payload,
+            name="preflight_order_status_sync",
+            ok=True,
+            message="ok",
+        )
+        if not self._open_orders_match_repository(
+            order_status_repository=resources.order_status_repository,
+            symbols=(symbol,),
+        ):
+            self._append_check(
+                payload=payload,
+                name="preflight_open_orders_match",
+                ok=False,
+                message="open orders are not synchronized with api",
+            )
+            return False
+        self._append_check(
+            payload=payload,
+            name="preflight_open_orders_match",
+            ok=True,
+            message="ok",
+        )
+        try:
+            resources.position_reconciliation_service.reconcile(
+                symbol=symbol,
+                internal_position=self.trading_process.get_state(symbol).position,
+            )
+        except Exception as error:
+            self._append_check(
+                payload=payload,
+                name="preflight_position_reconciliation",
+                ok=False,
+                message=f"position reconciliation failed: {error}",
+            )
+            return False
+        self._append_check(
+            payload=payload,
+            name="preflight_position_reconciliation",
+            ok=True,
+            message="ok",
+        )
+        return True
+
+    def _build_order_status_event_from_repository(
+        self,
+        order: Order,
+        synced_order: Order,
+    ):
+        """注文状態リポジトリの結果をイベントへ変換する。"""
+
+        return self.trading_process.event_factory.create(
+            event_type=EventType.ORDER_STATUS_UPDATED,
+            timestamp=self.clock.now(),
+            symbol=synced_order.symbol,
+            payload=OrderStatusPayload(
+                order_id=order.order_id,
+                status=synced_order.status,
+                filled_quantity=synced_order.filled_quantity,
+                remaining_quantity=synced_order.remaining_quantity,
+                avg_price=synced_order.avg_price,
+                side=synced_order.side,
+                order_quantity=synced_order.quantity,
+                is_exit=synced_order.is_exit,
+                external_order_id=synced_order.external_order_id,
+            ),
+        )
+
+    def _api_order_dry_run_payload(
+        self,
+        symbol: str,
+        side: OrderSide,
+        quantity: int,
+    ) -> dict[str, Any]:
+        """api-order-dry-run の初期レスポンスを生成する。"""
+
+        return {
+            "ok": False,
+            "command": "api-order-dry-run",
+            "symbol": symbol,
+            "side": side.value,
+            "quantity": quantity,
+            "order_id": "",
+            "order_status": "",
+            "filled_quantity": 0,
+            "remaining_quantity": quantity,
+            "position_quantity": 0,
+            "position": {
+                "symbol": symbol,
+                "quantity": 0,
+                "average_price": 0.0,
+            },
+            "trading_mode": self.config.app.trading_mode.value,
+            "kabu_api_environment": self.config.app.kabu_api.environment.value,
+            "base_url": self.config.app.kabu_api.base_url,
+            "is_halted": False,
+            "reason": "",
+            "message": "",
+            "checks": [],
+            "errors": [],
+        }
+
+    def _append_check(
+        self,
+        payload: dict[str, Any],
+        name: str,
+        ok: bool,
+        message: str,
+    ) -> None:
+        """チェック結果を payload に追加する。"""
+
+        payload["checks"].append({"name": name, "ok": ok, "message": message})
+        if not ok:
+            payload["message"] = message
+            payload["errors"].append(message)
+
+    def _finalize_api_order_dry_run_log(self, payload: dict[str, Any]) -> None:
+        """api-order-dry-run の結果をログ出力する。"""
+
+        self.logger.info(
+            "operational command command=api-order-dry-run symbol=%s side=%s quantity=%s order_id=%s order_status=%s result=%s error_reason=%s",
+            payload["symbol"],
+            payload["side"],
+            payload["quantity"],
+            payload["order_id"],
+            payload["order_status"],
+            "ok" if payload["ok"] else "ng",
+            payload["errors"][0] if payload["errors"] else "",
+        )
+
 def initialize_application(
     config_dir: Path = CONFIG_DIR,
     csv_path: Path | None = None,
@@ -598,6 +1008,7 @@ def initialize_application(
 def build_application_runtime(
     config: SystemConfig,
     csv_path: Path | None = None,
+    allow_real_order_disabled: bool = False,
 ) -> ApplicationRuntime:
     """設定済みのプロセス群を構築する。"""
 
@@ -664,6 +1075,7 @@ def build_application_runtime(
         config=config,
         logger=logger,
         trading_process=trading_process,
+        allow_real_order_disabled=allow_real_order_disabled,
     )
     persistence_process = PersistenceProcess(
         event_bus=event_bus,
@@ -737,10 +1149,19 @@ def _build_order_gateway(
     config: SystemConfig,
     logger: logging.Logger,
     trading_process: TradingProcess | None = None,
+    allow_real_order_disabled: bool = False,
 ) -> OrderGateway:
     if config.app.trading_mode == TradingMode.PAPER:
         return MockOrderGateway()
     if config.app.trading_mode == TradingMode.LIVE:
+        if allow_real_order_disabled:
+            logger.warning(
+                "real order gateway disabled trading_mode=%s kabu_api_environment=%s base_url=%s",
+                config.app.trading_mode.value,
+                config.app.kabu_api.environment.value,
+                config.app.kabu_api.base_url,
+            )
+            return MockOrderGateway()
         _ensure_live_order_allowed(config)
         enabled_symbols = tuple(
             symbol.code for symbol in config.symbols if symbol.enabled
@@ -784,6 +1205,59 @@ def _build_order_gateway(
             ),
         )
     raise ValueError(f"unsupported trading_mode={config.app.trading_mode.value}")
+
+
+def _build_api_order_dry_run_resources(
+    config: SystemConfig,
+    logger: logging.Logger,
+    trading_process: TradingProcess,
+) -> ApiOrderDryRunResources:
+    """api-order-dry-run 用の API リソースを構築する。"""
+
+    api_client = KabuApiClient(config=config.app.kabu_api)
+    token = api_client.get_token()
+    enabled_symbols = tuple(symbol.code for symbol in config.symbols if symbol.enabled)
+    position_repository = PositionRepository(
+        api_client=api_client,
+        token=token,
+        logger=logger,
+    )
+    order_status_repository = OrderStatusRepository(
+        api_client=api_client,
+        token=token,
+        logger=logger,
+    )
+    order_safety_validator = OrderSafetyValidator(
+        trading_mode=config.app.trading_mode,
+        kabu_api_environment=config.app.kabu_api.environment,
+        max_order_quantity=config.app.max_order_quantity,
+        trade_symbols=_resolve_enabled_trade_symbols(config),
+        enabled_symbols=enabled_symbols,
+        allow_api_paper_orders=True,
+        state_provider=_build_order_safety_state_provider(
+            position_repository=position_repository,
+            order_status_repository=order_status_repository,
+            risk_manager=trading_process.risk_manager,
+        ),
+        logger=logger,
+    )
+    return ApiOrderDryRunResources(
+        order_status_repository=order_status_repository,
+        position_repository=position_repository,
+        position_reconciliation_service=PositionReconciliationService(
+            position_repository=position_repository,
+            average_price_tolerance=config.app.position_average_price_tolerance,
+            logger=logger,
+        ),
+        order_safety_validator=order_safety_validator,
+        order_gateway=LiveOrderGateway(
+            api_client=api_client,
+            token=token,
+            allowed_symbols=enabled_symbols,
+            safety_validator=order_safety_validator,
+            logger=logger,
+        ),
+    )
 
 
 def _build_order_safety_state_provider(
@@ -978,7 +1452,13 @@ def _run_operational_command(
     """運用コマンドを実行する。"""
 
     command = arguments[0]
-    if command not in {"halt-status", "halt", "resume", "preflight-check"}:
+    if command not in {
+        "halt-status",
+        "halt",
+        "resume",
+        "preflight-check",
+        "api-order-dry-run",
+    }:
         raise ValueError(f"unsupported command: {command}")
     json_output = "--json" in arguments
     snapshot_store = OperationalSnapshotStore(
@@ -1023,7 +1503,10 @@ def _run_operational_command(
         return 0
 
     try:
-        runtime = build_application_runtime(config=config)
+        runtime = build_application_runtime(
+            config=config,
+            allow_real_order_disabled=True,
+        )
     except Exception as error:
         payload = _error_payload(
             message=f"runtime initialization failed: {error}",
@@ -1039,6 +1522,22 @@ def _run_operational_command(
         _write_cli_output(payload, json_output=json_output)
         return 1
     runtime.restore_snapshot_state()
+
+    if command == "api-order-dry-run":
+        try:
+            payload = runtime.run_api_order_dry_run(
+                symbol=_parse_required_option(arguments, "--symbol"),
+                side=_parse_order_side(arguments),
+                quantity=_parse_required_int_option(arguments, "--quantity"),
+                price=_parse_optional_float_option(arguments, "--price"),
+            )
+        except Exception as error:
+            payload = _error_payload(
+                message=str(error),
+                halt_state=runtime.get_trading_halt_state(),
+            )
+        _write_cli_output(payload, json_output=json_output)
+        return 0 if payload["ok"] else 1
 
     if command == "resume":
         ok = runtime.resume_trading()
@@ -1085,6 +1584,34 @@ def _parse_option(arguments: list[str], name: str) -> str | None:
     if index + 1 >= len(arguments):
         raise ValueError(f"missing option value: {name}")
     return arguments[index + 1]
+
+
+def _parse_required_option(arguments: list[str], name: str) -> str:
+    """必須オプション値を取得する。"""
+
+    value = _parse_option(arguments, name)
+    if value is None:
+        raise ValueError(f"missing required option: {name}")
+    return value
+
+
+def _parse_required_int_option(arguments: list[str], name: str) -> int:
+    """必須整数オプション値を取得する。"""
+
+    return int(_parse_required_option(arguments, name))
+
+
+def _parse_optional_float_option(arguments: list[str], name: str) -> float | None:
+    """任意の浮動小数点オプション値を取得する。"""
+
+    value = _parse_option(arguments, name)
+    return float(value) if value is not None else None
+
+
+def _parse_order_side(arguments: list[str]) -> OrderSide:
+    """注文 side オプションを解釈する。"""
+
+    return OrderSide(_parse_required_option(arguments, "--side").upper())
 
 
 def _halt_state_payload(halt_state: TradingHaltState) -> dict[str, Any]:
@@ -1134,6 +1661,32 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
     if json_output:
         sys.stdout.write(json.dumps(payload, ensure_ascii=False))
         sys.stdout.write("\n")
+        return
+    if payload.get("command") == "api-order-dry-run":
+        sys.stdout.write(f"ok: {payload['ok']}\n")
+        sys.stdout.write(f"symbol: {payload['symbol']}\n")
+        sys.stdout.write(f"side: {payload['side']}\n")
+        sys.stdout.write(f"quantity: {payload['quantity']}\n")
+        sys.stdout.write(f"order_id: {payload['order_id']}\n")
+        sys.stdout.write(f"order_status: {payload['order_status']}\n")
+        sys.stdout.write(f"filled_quantity: {payload['filled_quantity']}\n")
+        sys.stdout.write(f"remaining_quantity: {payload['remaining_quantity']}\n")
+        sys.stdout.write(f"position_quantity: {payload['position_quantity']}\n")
+        sys.stdout.write(f"trading_mode: {payload['trading_mode']}\n")
+        sys.stdout.write(
+            f"kabu_api_environment: {payload['kabu_api_environment']}\n"
+        )
+        sys.stdout.write(f"base_url: {payload['base_url']}\n")
+        if payload.get("checks"):
+            sys.stdout.write("checks:\n")
+            for check in payload["checks"]:
+                sys.stdout.write(
+                    f"  - {check['name']}: {'OK' if check['ok'] else 'NG'} {check['message']}\n"
+                )
+        if payload.get("errors"):
+            sys.stdout.write("errors:\n")
+            for error in payload["errors"]:
+                sys.stdout.write(f"  - {error}\n")
         return
     sys.stdout.write(f"ok: {payload['ok']}\n")
     sys.stdout.write(f"is_halted: {payload['is_halted']}\n")

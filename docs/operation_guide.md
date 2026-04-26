@@ -192,3 +192,20 @@ API接続が必要なため失敗する可能性があるコマンド:
 - `halt-status` と `halt` は API 初期化なしで実行できます
 - `preflight-check` と `resume` は API 初期化が必要です
 - 停止状態はスナップショット保存のため、再起動しても自動解除されません
+## api-order-dry-run
+
+`api-order-dry-run` は、kabuステーション検証 API 18081 に対して注文フローを 1 回だけ確認するためのコマンドです。
+
+- `kabu_api_environment=paper` のときだけ実行できます
+- 本番 API 18080 (`kabu_api_environment=live`) では実行できません
+- 実行前に kabuステーションを検証モードで起動してください
+- 基本数量は `1306=10`、`1321=1`、`1570=1` を推奨します
+- 注文前ガード、注文状態同期、建玉取得、建玉突合を通して結果を確認します
+
+実行例:
+
+```bash
+python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1
+python main.py api-order-dry-run --symbol 1570 --side BUY --quantity 1 --json
+python main.py api-order-dry-run --symbol 1306 --side BUY --quantity 10
+```

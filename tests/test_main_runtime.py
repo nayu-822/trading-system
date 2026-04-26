@@ -23,7 +23,7 @@ from domain.events import (
     OrderStatusPayload,
     SignalPayload,
 )
-from domain.models import IndicatorValue, Order, SystemConfig
+from domain.models import IndicatorValue, Order, Position, SystemConfig
 from infrastructure.config_loader import load_config
 from infrastructure.event_bus import EventBus
 
@@ -729,6 +729,142 @@ def test_initialize_application_flushes_when_keyboard_interrupt(monkeypatch) -> 
     ]
 
 
+def test_runtime_api_order_dry_run_allows_paper_environment_only(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_paper",
+        trading_mode=TradingMode.LIVE,
+        kabu_api_environment=app_main.KabuApiEnvironment.PAPER,
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert payload["ok"] is True
+    assert payload["order_id"] == "api-order-1"
+
+
+def test_runtime_api_order_dry_run_rejects_live_environment(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_live",
+        trading_mode=TradingMode.LIVE,
+        kabu_api_environment=app_main.KabuApiEnvironment.LIVE,
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert payload["ok"] is False
+    assert "kabu_api_environment must be paper" in payload["errors"]
+
+
+def test_runtime_api_order_dry_run_rejects_symbol_outside_trade_symbols(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_symbol",
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="9999", side=OrderSide.BUY, quantity=1)
+
+    assert payload["ok"] is False
+    assert "symbol is not in trade_symbols" in payload["errors"]
+
+
+def test_runtime_api_order_dry_run_rejects_quantity_over_max_order_quantity(
+    monkeypatch,
+) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_quantity",
+        max_order_quantity=1,
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=2)
+
+    assert payload["ok"] is False
+    assert "quantity exceeds max_order_quantity" in payload["errors"]
+
+
+def test_runtime_api_order_dry_run_rejects_when_halted(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_halted",
+    )
+    assert runtime.trading_process.risk_manager is not None
+    runtime.trading_process.risk_manager.halt_trading(
+        reason=TradingHaltReason.MANUAL,
+        message="manual halt",
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert payload["ok"] is False
+    assert "trading is halted" in payload["errors"]
+
+
+def test_runtime_api_order_dry_run_does_not_call_order_api_when_preflight_fails(
+    monkeypatch,
+) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_preflight_ng",
+        resource_options={"preflight_error": RuntimeError("preflight failed")},
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    resources = _current_dry_run_resources()
+
+    assert payload["ok"] is False
+    assert "preflight failed" in payload["errors"][0]
+    assert resources.gateway.place_order_calls == 0
+
+
+def test_runtime_api_order_dry_run_does_not_call_order_api_when_order_safety_fails(
+    monkeypatch,
+) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_guard_ng",
+        resource_options={"guard_reason": "incomplete order exists"},
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    resources = _current_dry_run_resources()
+
+    assert payload["ok"] is False
+    assert "incomplete order exists" in payload["errors"]
+    assert resources.gateway.place_order_calls == 0
+
+
+def test_runtime_api_order_dry_run_calls_order_sync_and_reconciliation_on_success(
+    monkeypatch,
+) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_success",
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    resources = _current_dry_run_resources()
+
+    assert payload["ok"] is True
+    assert resources.gateway.place_order_calls == 1
+    assert resources.order_status_repository.get_order_status_calls == 1
+    assert resources.position_reconciliation_service.call_count >= 2
+
+
+def test_runtime_api_order_dry_run_returns_error_when_gateway_raises(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_gateway_error",
+        resource_options={"gateway_error": RuntimeError("api failed")},
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert payload["ok"] is False
+    assert payload["errors"] == ["api failed"]
+
+
 class _FakeExternalDataProcess:
     def __init__(
         self,
@@ -795,6 +931,206 @@ class _FakeRuntimeForInterrupt:
     def stop(self) -> None:
         self.calls.append("stop")
         self.flush()
+
+
+_API_ORDER_DRY_RUN_RESOURCES: "_FakeApiOrderDryRunResources | None" = None
+
+
+def _build_api_order_dry_run_runtime(
+    monkeypatch,
+    snapshot_name: str,
+    trading_mode: TradingMode = TradingMode.LIVE,
+    kabu_api_environment=app_main.KabuApiEnvironment.PAPER,
+    max_order_quantity: int = 10,
+    resource_options: dict[str, Any] | None = None,
+):
+    snapshot_dir = _test_dir(snapshot_name)
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.CSV,
+        snapshot_dir=snapshot_dir,
+    )
+    config = replace(
+        config,
+        app=replace(
+            config.app,
+            trading_mode=trading_mode,
+            kabu_api=replace(
+                config.app.kabu_api,
+                environment=kabu_api_environment,
+            ),
+            max_order_quantity=max_order_quantity,
+            trade_symbols=("1306", "1321", "1570"),
+        ),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(_FakeExternalDataProcess(events=())),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_api_order_dry_run_resources",
+        lambda config, logger, trading_process: _set_current_dry_run_resources(
+            _FakeApiOrderDryRunResources(
+                event_factory=trading_process.event_factory,
+                **(resource_options or {}),
+            )
+        ),
+    )
+    return app_main.build_application_runtime(
+        config=config,
+        allow_real_order_disabled=True,
+    )
+
+
+def _set_current_dry_run_resources(resources: "_FakeApiOrderDryRunResources"):
+    global _API_ORDER_DRY_RUN_RESOURCES
+    _API_ORDER_DRY_RUN_RESOURCES = resources
+    return resources
+
+
+def _current_dry_run_resources() -> "_FakeApiOrderDryRunResources":
+    if _API_ORDER_DRY_RUN_RESOURCES is None:
+        raise AssertionError("api-order-dry-run resources are not initialized")
+    return _API_ORDER_DRY_RUN_RESOURCES
+
+
+class _FakeApiOrderDryRunResources:
+    def __init__(
+        self,
+        event_factory: EventFactory,
+        preflight_error: Exception | None = None,
+        guard_reason: str | None = None,
+        gateway_error: Exception | None = None,
+    ) -> None:
+        self.order_status_repository = _FakeDryRunOrderStatusRepository(
+            preflight_error=preflight_error
+        )
+        self.position_repository = _FakeDryRunPositionRepository()
+        self.position_reconciliation_service = _FakeDryRunPositionReconciliationService(
+            position_repository=self.position_repository,
+            preflight_error=preflight_error,
+        )
+        self.order_safety_validator = _FakeDryRunOrderSafetyValidator(
+            reason=guard_reason
+        )
+        self.gateway = _FakeDryRunGateway(
+            event_factory=event_factory,
+            error=gateway_error,
+        )
+        self.order_gateway = self.gateway
+
+
+class _FakeDryRunOrderStatusRepository:
+    def __init__(self, preflight_error: Exception | None = None) -> None:
+        self.preflight_error = preflight_error
+        self.list_orders_calls = 0
+        self.get_order_status_calls = 0
+
+    def list_orders(
+        self,
+        symbol: str | None = None,
+        force_refresh: bool = False,
+    ) -> tuple[Order, ...]:
+        self.list_orders_calls += 1
+        if self.preflight_error is not None:
+            raise self.preflight_error
+        return ()
+
+    def get_open_orders(
+        self,
+        symbol: str | None = None,
+        force_refresh: bool = False,
+    ) -> list[Order]:
+        if self.preflight_error is not None:
+            raise self.preflight_error
+        return []
+
+    def get_order_status(
+        self,
+        order_id: str,
+        force_refresh: bool = False,
+    ) -> Order | None:
+        self.get_order_status_calls += 1
+        return Order(
+            order_id="api-order-1",
+            external_order_id="api-order-1",
+            symbol="1321",
+            side=OrderSide.BUY,
+            quantity=1,
+            order_type="MARKET",
+            status=OrderStatus.REQUESTED,
+            filled_quantity=0,
+            remaining_quantity=1,
+        )
+
+
+class _FakeDryRunPositionRepository:
+    def get_position(self, symbol: str, force_refresh: bool = False) -> Position:
+        return Position(symbol=symbol, quantity=0, average_price=0.0)
+
+
+class _FakeDryRunPositionReconciliationService:
+    def __init__(
+        self,
+        position_repository: _FakeDryRunPositionRepository,
+        preflight_error: Exception | None = None,
+    ) -> None:
+        self.position_repository = position_repository
+        self.preflight_error = preflight_error
+        self.call_count = 0
+
+    def reconcile(self, symbol: str, internal_position) -> None:
+        self.call_count += 1
+        if self.preflight_error is not None:
+            raise self.preflight_error
+        self.position_repository.get_position(symbol, force_refresh=True)
+
+
+class _FakeDryRunOrderSafetyValidator:
+    def __init__(self, reason: str | None = None) -> None:
+        self.reason = reason
+
+    def evaluate_order(self, order: Order):
+        return type(
+            "_Decision",
+            (),
+            {"allowed": self.reason is None, "reason": self.reason},
+        )()
+
+
+class _FakeDryRunGateway:
+    def __init__(
+        self,
+        event_factory: EventFactory,
+        error: Exception | None = None,
+    ) -> None:
+        self.event_factory = event_factory
+        self.error = error
+        self.place_order_calls = 0
+
+    def place_order(self, order: Order, timestamp: datetime):
+        self.place_order_calls += 1
+        if self.error is not None:
+            raise self.error
+        return (
+            self.event_factory.create(
+                event_type=EventType.ORDER_STATUS_UPDATED,
+                timestamp=timestamp,
+                symbol=order.symbol,
+                payload=OrderStatusPayload(
+                    order_id=order.order_id,
+                    status=OrderStatus.REQUESTED,
+                    filled_quantity=0,
+                    remaining_quantity=order.quantity,
+                    avg_price=None,
+                    side=order.side,
+                    order_quantity=order.quantity,
+                    is_exit=False,
+                    external_order_id="api-order-1",
+                ),
+            ),
+        )
 
 
 class _FakeLogger:
@@ -870,7 +1206,11 @@ def _runtime_config(
         snapshot_dir=str(snapshot_dir),
         recovery_enabled=recovery_enabled,
     )
-    return replace(config, app=app)
+    strategy = replace(
+        config.strategy,
+        trend=replace(config.strategy.trend, short_window=1, long_window=2),
+    )
+    return replace(config, app=app, strategy=strategy)
 
 
 def _market_data_event(price: float) -> BaseEvent[Any]:

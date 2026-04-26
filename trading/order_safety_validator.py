@@ -42,13 +42,14 @@ def _default_state_provider(symbol: str) -> OrderSafetyState:
 
 @dataclass
 class OrderSafetyValidator:
-    """実注文前の安全チェックを共通化する。"""
+    """注文前チェックの安全条件を評価する。"""
 
     trading_mode: TradingMode
     kabu_api_environment: KabuApiEnvironment
     max_order_quantity: int
     trade_symbols: tuple[str, ...]
     enabled_symbols: tuple[str, ...]
+    allow_api_paper_orders: bool = False
     state_provider: StateProvider = _default_state_provider
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
 
@@ -59,7 +60,7 @@ class OrderSafetyValidator:
             order: 判定対象の注文。
 
         Returns:
-            なし。
+            None
 
         Raises:
             OrderSafetyError: 注文前チェックで安全条件を満たさない場合。
@@ -80,10 +81,14 @@ class OrderSafetyValidator:
             OrderSafetyDecision: 注文可否と理由を含む判定結果。
         """
 
-        if self.trading_mode != TradingMode.LIVE:
-            return OrderSafetyDecision(False, "trading_mode is not live")
-        if self.kabu_api_environment != KabuApiEnvironment.LIVE:
-            return OrderSafetyDecision(False, "kabu_api_environment is not live")
+        if self.allow_api_paper_orders:
+            if self.kabu_api_environment != KabuApiEnvironment.PAPER:
+                return OrderSafetyDecision(False, "kabu_api_environment is not paper")
+        else:
+            if self.trading_mode != TradingMode.LIVE:
+                return OrderSafetyDecision(False, "trading_mode is not live")
+            if self.kabu_api_environment != KabuApiEnvironment.LIVE:
+                return OrderSafetyDecision(False, "kabu_api_environment is not live")
         if order.symbol not in self.trade_symbols:
             return OrderSafetyDecision(False, "symbol is not in trade_symbols")
         if order.symbol not in self.enabled_symbols:
@@ -120,27 +125,32 @@ class OrderSafetyValidator:
             if order.is_exit:
                 if order.side != OrderSide.SELL:
                     return OrderSafetyDecision(
-                        False, "long position exit requires sell order"
+                        False,
+                        "long position exit requires sell order",
                     )
                 if order.quantity > abs(position_quantity):
                     return OrderSafetyDecision(
-                        False, "close quantity exceeds long position"
+                        False,
+                        "close quantity exceeds long position",
                     )
                 return OrderSafetyDecision(True)
             if order.side == OrderSide.BUY:
                 return OrderSafetyDecision(False, "long position already exists")
             return OrderSafetyDecision(
-                False, "non-exit sell cannot reduce long position"
+                False,
+                "non-exit sell cannot reduce long position",
             )
 
         if order.is_exit:
             if order.side != OrderSide.BUY:
                 return OrderSafetyDecision(
-                    False, "short position exit requires buy order"
+                    False,
+                    "short position exit requires buy order",
                 )
             if order.quantity > abs(position_quantity):
                 return OrderSafetyDecision(
-                    False, "close quantity exceeds short position"
+                    False,
+                    "close quantity exceeds short position",
                 )
             return OrderSafetyDecision(True)
 
@@ -156,12 +166,13 @@ class OrderSafetyValidator:
         """未完了注文が存在するかを判定する。
 
         Args:
-            target_order: 今回判定対象の注文。
-            open_orders: 現在保持している未完了を含む注文一覧。
+            target_order: 判定対象の注文。
+            open_orders: 現在保持している未完了注文一覧。
 
         Returns:
-            bool: 判定対象以外の未完了注文が存在する場合は True。
+            bool: 対象注文以外に未完了注文が存在する場合は True。
         """
+
         for order in open_orders:
             if order.order_id == target_order.order_id:
                 continue

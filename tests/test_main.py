@@ -230,7 +230,11 @@ def test_main_resume_success_saves_snapshot(monkeypatch) -> None:
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
     monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
-    monkeypatch.setattr(app_main, "build_application_runtime", lambda config: fake_runtime)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: fake_runtime,
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(["resume"])
@@ -256,7 +260,11 @@ def test_main_resume_failure_keeps_halt_state(monkeypatch) -> None:
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
     monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
-    monkeypatch.setattr(app_main, "build_application_runtime", lambda config: fake_runtime)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: fake_runtime,
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(["resume"])
@@ -289,7 +297,11 @@ def test_main_preflight_check_does_not_change_state(monkeypatch) -> None:
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
     monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
-    monkeypatch.setattr(app_main, "build_application_runtime", lambda config: fake_runtime)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: fake_runtime,
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(["preflight-check"])
@@ -345,7 +357,9 @@ def test_main_resume_returns_error_when_runtime_initialization_fails(monkeypatch
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
-        lambda config: (_ for _ in ()).throw(RuntimeError("api init failed")),
+        lambda config, allow_real_order_disabled=False: (_ for _ in ()).throw(
+            RuntimeError("api init failed")
+        ),
     )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
@@ -366,7 +380,9 @@ def test_main_preflight_check_returns_error_when_runtime_initialization_fails(
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
-        lambda config: (_ for _ in ()).throw(RuntimeError("api init failed")),
+        lambda config, allow_real_order_disabled=False: (_ for _ in ()).throw(
+            RuntimeError("api init failed")
+        ),
     )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
@@ -387,7 +403,9 @@ def test_main_preflight_check_outputs_json_when_runtime_initialization_fails(
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
-        lambda config: (_ for _ in ()).throw(RuntimeError("api init failed")),
+        lambda config, allow_real_order_disabled=False: (_ for _ in ()).throw(
+            RuntimeError("api init failed")
+        ),
     )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
@@ -398,12 +416,116 @@ def test_main_preflight_check_outputs_json_when_runtime_initialization_fails(
     assert '"runtime initialization failed: api init failed"' in output.getvalue()
 
 
+def test_main_api_order_dry_run_outputs_json(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    fake_runtime = _FakeRuntime(
+        halt_state=TradingHaltState(),
+        api_order_dry_run_result={
+            "ok": True,
+            "command": "api-order-dry-run",
+            "symbol": "1321",
+            "side": "BUY",
+            "quantity": 1,
+            "order_id": "api-order-1",
+            "order_status": "REQUESTED",
+            "filled_quantity": 0,
+            "remaining_quantity": 1,
+            "position_quantity": 0,
+            "position": {"symbol": "1321", "quantity": 0, "average_price": 0.0},
+            "trading_mode": config.app.trading_mode.value,
+            "kabu_api_environment": config.app.kabu_api.environment.value,
+            "base_url": config.app.kabu_api.base_url,
+            "checks": [],
+            "errors": [],
+        },
+    )
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: fake_runtime,
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        [
+            "api-order-dry-run",
+            "--symbol",
+            "1321",
+            "--side",
+            "BUY",
+            "--quantity",
+            "1",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    assert fake_runtime.api_order_dry_run_calls == [("1321", "BUY", 1, None)]
+    assert '"command": "api-order-dry-run"' in output.getvalue()
+    assert '"order_id": "api-order-1"' in output.getvalue()
+
+
+def test_main_api_order_dry_run_returns_exit_code_one_on_api_error(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    fake_runtime = _FakeRuntime(
+        halt_state=TradingHaltState(),
+        api_order_dry_run_result={
+            "ok": False,
+            "command": "api-order-dry-run",
+            "symbol": "1570",
+            "side": "BUY",
+            "quantity": 1,
+            "order_id": "",
+            "order_status": "",
+            "filled_quantity": 0,
+            "remaining_quantity": 1,
+            "position_quantity": 0,
+            "position": {"symbol": "1570", "quantity": 0, "average_price": 0.0},
+            "trading_mode": config.app.trading_mode.value,
+            "kabu_api_environment": config.app.kabu_api.environment.value,
+            "base_url": config.app.kabu_api.base_url,
+            "checks": [],
+            "errors": ["api failed"],
+        },
+    )
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: fake_runtime,
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        [
+            "api-order-dry-run",
+            "--symbol",
+            "1570",
+            "--side",
+            "BUY",
+            "--quantity",
+            "1",
+        ]
+    )
+
+    assert exit_code == 1
+    assert "api failed" in output.getvalue()
+
+
 class _FakeRuntime:
     def __init__(
         self,
         halt_state: TradingHaltState,
         resume_result: bool = False,
         preflight_result: dict | None = None,
+        api_order_dry_run_result: dict | None = None,
     ) -> None:
         self.halt_state = halt_state
         self.resume_result = resume_result
@@ -415,10 +537,29 @@ class _FakeRuntime:
             "checks": [],
             "errors": [],
         }
+        self.api_order_dry_run_result = api_order_dry_run_result or {
+            "ok": True,
+            "command": "api-order-dry-run",
+            "symbol": "7203",
+            "side": "BUY",
+            "quantity": 1,
+            "order_id": "api-order-1",
+            "order_status": "REQUESTED",
+            "filled_quantity": 0,
+            "remaining_quantity": 1,
+            "position_quantity": 0,
+            "position": {"symbol": "7203", "quantity": 0, "average_price": 0.0},
+            "trading_mode": "paper",
+            "kabu_api_environment": "paper",
+            "base_url": "http://localhost:18081/kabusapi",
+            "checks": [],
+            "errors": [],
+        }
         self.halt_calls: list[tuple[TradingHaltReason, str]] = []
         self.resume_calls = 0
         self.save_snapshot_calls = 0
         self.restore_calls = 0
+        self.api_order_dry_run_calls: list[tuple[str, str, int, float | None]] = []
 
     def restore_snapshot_state(self) -> bool:
         self.restore_calls += 1
@@ -451,6 +592,16 @@ class _FakeRuntime:
 
     def run_preflight_check(self) -> dict:
         return self.preflight_result
+
+    def run_api_order_dry_run(
+        self,
+        symbol: str,
+        side,
+        quantity: int,
+        price: float | None = None,
+    ) -> dict:
+        self.api_order_dry_run_calls.append((symbol, side.value, quantity, price))
+        return self.api_order_dry_run_result
 
 
 def _timestamp() -> datetime:
