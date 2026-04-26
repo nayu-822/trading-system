@@ -726,7 +726,6 @@ class ApplicationRuntime:
             return payload
 
         state = self.trading_process.get_state(symbol)
-        state.orders.append(order)
         started_temporarily = False
         if not self.trading_process._subscribed:
             self.trading_process.start()
@@ -806,8 +805,6 @@ class ApplicationRuntime:
             payload["errors"] = []
             return payload
         except Exception as error:
-            if order in state.orders:
-                state.orders.remove(order)
             payload["message"] = str(error)
             payload["errors"] = [str(error)]
             return payload

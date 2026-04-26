@@ -138,6 +138,30 @@ def test_build_order_safety_state_provider_rejects_when_trading_is_halted() -> N
         raise AssertionError("ValueError was not raised")
 
 
+def test_build_api_order_dry_run_resources_enables_api_paper_orders(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    config = replace(
+        config,
+        app=replace(
+            config.app,
+            trading_mode=app_main.TradingMode.LIVE,
+            kabu_api=replace(
+                config.app.kabu_api,
+                environment=app_main.KabuApiEnvironment.PAPER,
+            ),
+        ),
+    )
+    monkeypatch.setattr(app_main.KabuApiClient, "get_token", lambda self: "token-1")
+
+    resources = app_main._build_api_order_dry_run_resources(
+        config=config,
+        logger=FakeLogger(),  # type: ignore[arg-type]
+        trading_process=app_main.TradingProcess(event_bus=app_main.EventBus()),
+    )
+
+    assert resources.order_safety_validator.allow_api_paper_orders is True
+
+
 def test_main_halt_status_outputs_current_state(monkeypatch) -> None:
     config = replace(
         load_config(Path("config")),

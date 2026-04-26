@@ -589,6 +589,40 @@ def test_order_safety_validator_rejects_when_state_provider_is_missing() -> None
         validator.validate_order(_market_buy_order())
 
 
+def test_live_order_gateway_accepts_api_order_dry_run_with_paper_validator() -> None:
+    class FakeApiClient:
+        def send_order(self, token: str, order_request: KabuOrderRequest) -> KabuOrderResult:
+            return KabuOrderResult(
+                order_id="api-order-1",
+                symbol=order_request.symbol,
+                status=OrderStatus.REQUESTED,
+                filled_quantity=0,
+                remaining_quantity=order_request.quantity,
+                avg_price=None,
+            )
+
+    validator = OrderSafetyValidator(
+        trading_mode=TradingMode.LIVE,
+        kabu_api_environment=KabuApiEnvironment.PAPER,
+        max_order_quantity=1,
+        trade_symbols=("7203",),
+        enabled_symbols=("7203",),
+        allow_api_paper_orders=True,
+        state_provider=lambda symbol: OrderSafetyState(position=Position(symbol=symbol)),
+    )
+    gateway = LiveOrderGateway(
+        api_client=FakeApiClient(),  # type: ignore[arg-type]
+        token="token-1",
+        allowed_symbols=("7203",),
+        safety_validator=validator,
+    )
+
+    events = gateway.place_order(order=_market_buy_order(), timestamp=_timestamp())
+
+    assert len(events) == 1
+    assert events[0].payload.external_order_id == "api-order-1"
+
+
 def _timestamp() -> datetime:
     return datetime(2026, 4, 18, tzinfo=timezone.utc)
 

@@ -735,12 +735,29 @@ def test_runtime_api_order_dry_run_allows_paper_environment_only(monkeypatch) ->
         snapshot_name="api_order_dry_run_paper",
         trading_mode=TradingMode.LIVE,
         kabu_api_environment=app_main.KabuApiEnvironment.PAPER,
+        resource_options={"use_real_validator": True},
     )
 
     payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
 
     assert payload["ok"] is True
     assert payload["order_id"] == "api-order-1"
+    assert _current_dry_run_resources().allow_api_paper_orders is True
+
+
+def test_runtime_api_order_dry_run_does_not_fail_with_not_live_guard(monkeypatch) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_not_live_guard",
+        trading_mode=TradingMode.LIVE,
+        kabu_api_environment=app_main.KabuApiEnvironment.PAPER,
+        resource_options={"use_real_validator": True},
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert payload["ok"] is True
+    assert "kabu_api_environment is not live" not in payload["errors"]
 
 
 def test_runtime_api_order_dry_run_rejects_live_environment(monkeypatch) -> None:
@@ -850,6 +867,51 @@ def test_runtime_api_order_dry_run_calls_order_sync_and_reconciliation_on_succes
     assert resources.gateway.place_order_calls == 1
     assert resources.order_status_repository.get_order_status_calls == 1
     assert resources.position_reconciliation_service.call_count >= 2
+
+
+def test_runtime_api_order_dry_run_does_not_add_order_before_api_send(
+    monkeypatch,
+) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_no_pre_append",
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    resources = _current_dry_run_resources()
+
+    assert payload["ok"] is True
+    assert resources.gateway.orders_count_before_place_order == 0
+
+
+def test_runtime_api_order_dry_run_gateway_internal_validate_also_passes(
+    monkeypatch,
+) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_gateway_validate",
+        resource_options={"use_real_validator": True},
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert payload["ok"] is True
+
+
+def test_runtime_api_order_dry_run_rejects_when_existing_open_order_exists(
+    monkeypatch,
+) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_existing_open_order",
+        resource_options={"use_real_validator": True, "open_orders_exist": True},
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    resources = _current_dry_run_resources()
+
+    assert payload["ok"] is False
+    assert resources.gateway.place_order_calls == 0
 
 
 def test_runtime_api_order_dry_run_returns_error_when_gateway_raises(monkeypatch) -> None:
@@ -973,6 +1035,7 @@ def _build_api_order_dry_run_runtime(
         lambda config, logger, trading_process: _set_current_dry_run_resources(
             _FakeApiOrderDryRunResources(
                 event_factory=trading_process.event_factory,
+                trading_process=trading_process,
                 **(resource_options or {}),
             )
         ),
@@ -999,31 +1062,62 @@ class _FakeApiOrderDryRunResources:
     def __init__(
         self,
         event_factory: EventFactory,
+        trading_process,
         preflight_error: Exception | None = None,
         guard_reason: str | None = None,
         gateway_error: Exception | None = None,
+        use_real_validator: bool = False,
+        open_orders_exist: bool = False,
     ) -> None:
         self.order_status_repository = _FakeDryRunOrderStatusRepository(
-            preflight_error=preflight_error
+            preflight_error=preflight_error,
+            open_orders_exist=open_orders_exist,
         )
         self.position_repository = _FakeDryRunPositionRepository()
         self.position_reconciliation_service = _FakeDryRunPositionReconciliationService(
             position_repository=self.position_repository,
             preflight_error=preflight_error,
         )
-        self.order_safety_validator = _FakeDryRunOrderSafetyValidator(
-            reason=guard_reason
+        if use_real_validator:
+            self.order_safety_validator = app_main.OrderSafetyValidator(
+                trading_mode=TradingMode.LIVE,
+                kabu_api_environment=app_main.KabuApiEnvironment.PAPER,
+                max_order_quantity=10,
+                trade_symbols=("1306", "1321", "1570"),
+                enabled_symbols=("7203", "1306", "1321", "1570"),
+                allow_api_paper_orders=True,
+                state_provider=app_main._build_order_safety_state_provider(
+                    position_repository=self.position_repository,  # type: ignore[arg-type]
+                    order_status_repository=self.order_status_repository,  # type: ignore[arg-type]
+                    risk_manager=trading_process.risk_manager,
+                ),
+            )
+        else:
+            self.order_safety_validator = _FakeDryRunOrderSafetyValidator(
+                reason=guard_reason
+            )
+        self.allow_api_paper_orders = getattr(
+            self.order_safety_validator,
+            "allow_api_paper_orders",
+            False,
         )
         self.gateway = _FakeDryRunGateway(
             event_factory=event_factory,
+            trading_process=trading_process,
+            validator=self.order_safety_validator,
             error=gateway_error,
         )
         self.order_gateway = self.gateway
 
 
 class _FakeDryRunOrderStatusRepository:
-    def __init__(self, preflight_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        preflight_error: Exception | None = None,
+        open_orders_exist: bool = False,
+    ) -> None:
         self.preflight_error = preflight_error
+        self.open_orders_exist = open_orders_exist
         self.list_orders_calls = 0
         self.get_order_status_calls = 0
 
@@ -1044,6 +1138,19 @@ class _FakeDryRunOrderStatusRepository:
     ) -> list[Order]:
         if self.preflight_error is not None:
             raise self.preflight_error
+        if self.open_orders_exist:
+            return [
+                Order(
+                    order_id="existing-open-order",
+                    external_order_id="existing-open-order",
+                    symbol=symbol or "1321",
+                    side=OrderSide.BUY,
+                    quantity=1,
+                    order_type="MARKET",
+                    status=OrderStatus.REQUESTED,
+                    remaining_quantity=1,
+                )
+            ]
         return []
 
     def get_order_status(
@@ -1103,16 +1210,26 @@ class _FakeDryRunGateway:
     def __init__(
         self,
         event_factory: EventFactory,
+        trading_process,
+        validator,
         error: Exception | None = None,
     ) -> None:
         self.event_factory = event_factory
+        self.trading_process = trading_process
+        self.validator = validator
         self.error = error
         self.place_order_calls = 0
+        self.orders_count_before_place_order: int | None = None
 
     def place_order(self, order: Order, timestamp: datetime):
         self.place_order_calls += 1
+        self.orders_count_before_place_order = len(
+            self.trading_process.get_state(order.symbol).orders
+        )
         if self.error is not None:
             raise self.error
+        if hasattr(self.validator, "validate_order"):
+            self.validator.validate_order(order)
         return (
             self.event_factory.create(
                 event_type=EventType.ORDER_STATUS_UPDATED,
