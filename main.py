@@ -1518,7 +1518,9 @@ def _run_operational_command(
                 halt_state=snapshot_store.load_halt_state(),
                 symbol=_parse_option(arguments, "--symbol") or "",
                 side=(_parse_option(arguments, "--side") or "").upper(),
-                quantity=int(_parse_option(arguments, "--quantity") or 0),
+                quantity=_parse_api_order_dry_run_quantity_for_error_payload(
+                    arguments
+                ),
             )
         else:
             payload = _error_payload(
@@ -1551,7 +1553,9 @@ def _run_operational_command(
                 halt_state=runtime.get_trading_halt_state(),
                 symbol=_parse_option(arguments, "--symbol") or "",
                 side=(_parse_option(arguments, "--side") or "").upper(),
-                quantity=int(_parse_option(arguments, "--quantity") or 0),
+                quantity=_parse_api_order_dry_run_quantity_for_error_payload(
+                    arguments
+                ),
             )
         _write_cli_output(payload, json_output=json_output)
         return 0 if payload["ok"] else 1
@@ -1616,6 +1620,39 @@ def _parse_required_int_option(arguments: list[str], name: str) -> int:
     """必須整数オプション値を取得する。"""
 
     return int(_parse_required_option(arguments, name))
+
+
+def _parse_optional_int_option_safe(arguments: list[str], name: str) -> int:
+    """整数オプションを安全に取得する。
+
+    Args:
+        arguments: CLI 引数一覧。
+        name: 取得対象のオプション名。
+
+    Returns:
+        int: 数値へ変換できた場合はその値。未指定または不正値は 0。
+    """
+
+    value = _parse_option(arguments, name)
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _parse_api_order_dry_run_quantity_for_error_payload(arguments: list[str]) -> int:
+    """api-order-dry-run のエラーペイロード用数量を安全に取得する。
+
+    Args:
+        arguments: CLI 引数一覧。
+
+    Returns:
+        int: エラーペイロードへ埋め込む数量。不正値は 0。
+    """
+
+    return _parse_optional_int_option_safe(arguments, "--quantity")
 
 
 def _parse_optional_float_option(arguments: list[str], name: str) -> float | None:

@@ -610,6 +610,100 @@ def test_main_api_order_dry_run_success_output_includes_next_action(monkeypatch)
     assert "時間を置いて注文状態同期を確認してください" in output.getvalue()
 
 
+def test_main_api_order_dry_run_with_invalid_quantity_does_not_crash(
+    monkeypatch,
+) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    fake_runtime = _FakeRuntime(halt_state=TradingHaltState())
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: fake_runtime,
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        ["api-order-dry-run", "--symbol", "1321", "--side", "BUY", "--quantity", "abc"]
+    )
+
+    assert exit_code == 1
+    assert fake_runtime.api_order_dry_run_calls == []
+    assert "ok: False" in output.getvalue()
+    assert "errors:" in output.getvalue()
+    assert "invalid literal for int()" in output.getvalue()
+    assert "next_action:" in output.getvalue()
+    assert "log_hint:" in output.getvalue()
+
+
+def test_main_api_order_dry_run_with_invalid_quantity_outputs_json(
+    monkeypatch,
+) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    fake_runtime = _FakeRuntime(halt_state=TradingHaltState())
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: fake_runtime,
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        [
+            "api-order-dry-run",
+            "--symbol",
+            "1321",
+            "--side",
+            "BUY",
+            "--quantity",
+            "abc",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    assert '"ok": false' in output.getvalue()
+    assert '"errors": [' in output.getvalue()
+    assert '"next_action": [' in output.getvalue()
+    assert '"log_hint": [' in output.getvalue()
+
+
+def test_main_api_order_dry_run_runtime_init_failure_with_invalid_quantity_outputs_error_payload(
+    monkeypatch,
+) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: (_ for _ in ()).throw(
+            RuntimeError("api init failed")
+        ),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        ["api-order-dry-run", "--symbol", "1321", "--side", "BUY", "--quantity", "abc"]
+    )
+
+    assert exit_code == 1
+    assert "ok: False" in output.getvalue()
+    assert "quantity: 0" in output.getvalue()
+    assert "api init failed" in output.getvalue()
+    assert "next_action:" in output.getvalue()
+    assert "log_hint:" in output.getvalue()
+
+
 def test_operation_guide_mentions_api_order_dry_run_follow_up_steps() -> None:
     guide = Path("docs/operation_guide.md").read_text(encoding="utf-8")
 
