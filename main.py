@@ -6,7 +6,6 @@ from datetime import datetime
 from pathlib import Path
 from threading import Event
 from typing import Any
-from urllib.parse import urlparse
 from uuid import uuid4
 
 from data_source.csv_loader import CsvMarketDataLoader
@@ -34,6 +33,7 @@ from domain.models import (
     TradingSymbolConfig,
 )
 from infrastructure.clock import RealClock
+from infrastructure.cli import api_order_precheck as api_order_precheck_cli
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
 from infrastructure.event_bus import EventBus
@@ -1979,37 +1979,15 @@ def _api_order_precheck_payload(
     quantity: int,
     halt_state: TradingHaltState | None = None,
 ) -> dict[str, Any]:
-    """api-order-precheck の初期 payload を生成する。
+    """api-order-precheck の初期 payload を生成する。"""
 
-    Args:
-        config: システム設定。
-        symbol: 対象銘柄コード。
-        side: 想定売買方向。
-        quantity: 想定数量。
-        halt_state: 現在の停止状態。
-
-    Returns:
-        dict[str, Any]: 事前確認結果用 payload。
-    """
-
-    return {
-        "ok": False,
-        "command": "api-order-precheck",
-        "trading_mode": config.app.trading_mode.value,
-        "kabu_api_environment": config.app.kabu_api.environment.value,
-        "base_url": config.app.kabu_api.base_url,
-        "symbol": symbol,
-        "side": side,
-        "quantity": quantity,
-        "is_halted": halt_state.is_halted if halt_state is not None else False,
-        "reason": (
-            halt_state.reason.value if halt_state is not None and halt_state.reason else ""
-        ),
-        "message": "",
-        "checks": [],
-        "errors": [],
-        "next_action": [],
-    }
+    return api_order_precheck_cli._api_order_precheck_payload(
+        config=config,
+        symbol=symbol,
+        side=side,
+        quantity=quantity,
+        halt_state=halt_state,
+    )
 
 
 def _api_order_precheck_error_payload(
@@ -2020,30 +1998,16 @@ def _api_order_precheck_error_payload(
     side: str = "BUY",
     quantity: int = 0,
 ) -> dict[str, Any]:
-    """api-order-precheck の異常終了用 payload を生成する。
+    """api-order-precheck の異常終了用 payload を生成する。"""
 
-    Args:
-        config: システム設定。
-        message: エラーメッセージ。
-        halt_state: 現在の停止状態。
-        symbol: 対象銘柄コード。
-        side: 想定売買方向。
-        quantity: 想定数量。
-
-    Returns:
-        dict[str, Any]: 整形済みのエラーペイロード。
-    """
-
-    payload = _api_order_precheck_payload(
+    return api_order_precheck_cli._api_order_precheck_error_payload(
         config=config,
+        message=message,
+        halt_state=halt_state,
         symbol=symbol,
         side=side,
         quantity=quantity,
-        halt_state=halt_state,
     )
-    payload["message"] = message
-    payload["errors"] = [message]
-    return _finalize_api_order_precheck_payload(payload)
 
 
 def _finalize_api_order_dry_run_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -2060,24 +2024,9 @@ def _finalize_api_order_dry_run_payload(payload: dict[str, Any]) -> dict[str, An
 
 
 def _finalize_api_order_precheck_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """api-order-precheck の表示用項目を補完する。
+    """api-order-precheck の表示用項目を補完する。"""
 
-    Args:
-        payload: 補完対象の payload。
-
-    Returns:
-        dict[str, Any]: 補完後の payload。
-    """
-
-    payload["ok"] = all(check["ok"] for check in payload.get("checks", [])) and not payload.get(
-        "errors"
-    )
-    payload["next_action"] = _resolve_api_order_precheck_next_action(payload)
-    if payload["ok"]:
-        payload["message"] = "ok"
-    elif not payload.get("message") and payload.get("errors"):
-        payload["message"] = payload["errors"][0]
-    return payload
+    return api_order_precheck_cli._finalize_api_order_precheck_payload(payload)
 
 
 def _resolve_position_side_label(position_quantity: int) -> str:
@@ -2158,57 +2107,15 @@ def _resolve_api_order_dry_run_log_hint(payload: dict[str, Any]) -> list[str]:
 
 
 def _resolve_api_order_precheck_next_action(payload: dict[str, Any]) -> list[str]:
-    """api-order-precheck の次アクションを返す。
+    """api-order-precheck ???????????"""
 
-    Args:
-        payload: 事前確認結果 payload。
-
-    Returns:
-        list[str]: 次に取るべき行動。
-    """
-
-    if payload.get("ok"):
-        return ["api-order-dry-run を実行できます"]
-
-    actions: list[str] = []
-    failed_checks = {
-        check["name"] for check in payload.get("checks", []) if not check.get("ok")
-    }
-    if "environment_is_paper" in failed_checks:
-        actions.append("config/app.yaml の kabu_api_environment を paper にしてください")
-    if "base_url_is_paper_port" in failed_checks:
-        actions.append("base_url が検証PORT 18081 を向いているか確認してください")
-    if "symbol_allowed" in failed_checks:
-        actions.append("config/app.yaml の trade_symbols を確認してください")
-    if "quantity_valid" in failed_checks:
-        actions.append("数量が 1以上 max_order_quantity 以下か確認してください")
-    if "not_halted" in failed_checks:
-        actions.append(
-            "halt-status で停止理由を確認し、必要なら原因調査後に resume してください"
-        )
-    if failed_checks.intersection(
-        {"api_connectivity", "position_fetch", "order_status_fetch", "preflight_check"}
-    ):
-        actions.append("kabuステーションを検証モードで起動し、API接続を確認してください")
-    if not actions:
-        actions.append("checks と errors を確認してください")
-    return actions
+    return api_order_precheck_cli._resolve_api_order_precheck_next_action(payload)
 
 
 def _is_paper_api_base_url(base_url: str) -> bool:
-    """検証 API 用 base_url かを判定する。
+    """?? API ? base_url ???????"""
 
-    Args:
-        base_url: 判定対象 URL。
-
-    Returns:
-        bool: 18081 ポートを指していれば True。
-    """
-
-    parsed = urlparse(base_url)
-    if parsed.port is not None:
-        return parsed.port == 18081
-    return ":18081" in base_url
+    return api_order_precheck_cli._is_paper_api_base_url(base_url)
 
 
 def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
