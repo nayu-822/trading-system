@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1189,7 +1190,8 @@ class ApplicationRuntime:
     ) -> dict[str, Any]:
         """api-order-dry-run の初期レスポンスを生成する。"""
 
-        return {
+        return _attach_command_record_context(
+            {
             "ok": False,
             "command": "api-order-dry-run",
             "symbol": symbol,
@@ -1218,7 +1220,9 @@ class ApplicationRuntime:
             "log_hint": [],
             "checks": [],
             "errors": [],
-        }
+            },
+            config=self.config,
+        )
 
     def _append_check(
         self,
@@ -1239,12 +1243,15 @@ class ApplicationRuntime:
 
         _finalize_api_order_dry_run_payload(payload)
         self.logger.info(
-            "operational command command=api-order-dry-run symbol=%s side=%s quantity=%s order_id=%s order_status=%s result=%s error_reason=%s",
+            "operational command command=api-order-dry-run executed_at=%s git_commit=%s symbol=%s side=%s quantity=%s order_id=%s order_status=%s reconciliation_result=%s result=%s error_reason=%s",
+            payload.get("executed_at", ""),
+            payload.get("git_commit", "unknown"),
             payload["symbol"],
             payload["side"],
             payload["quantity"],
             payload["order_id"],
             payload["order_status"],
+            payload.get("reconciliation_result", "UNKNOWN"),
             "ok" if payload["ok"] else "ng",
             payload["errors"][0] if payload["errors"] else "",
         )
@@ -1894,6 +1901,7 @@ def _run_operational_command(
             result="ng",
             reason=payload["reason"],
             message=payload["message"],
+            payload=payload if command in {"api-order-precheck", "api-order-dry-run"} else None,
         )
         _write_cli_output(payload, json_output=json_output)
         return 1
@@ -1921,8 +1929,9 @@ def _run_operational_command(
             logger=logger,
             command=command,
             result="ok" if payload["ok"] else "ng",
-            reason=payload["reason"],
-            message=payload["message"],
+            reason=payload.get("reason", ""),
+            message=payload.get("message", ""),
+            payload=payload,
         )
         _write_cli_output(payload, json_output=json_output)
         return 0 if payload["ok"] else 1
@@ -1946,6 +1955,14 @@ def _run_operational_command(
                     arguments
                 ),
             )
+        _log_operational_command(
+            logger=logger,
+            command=command,
+            result="ok" if payload["ok"] else "ng",
+            reason=payload.get("reason", ""),
+            message=payload.get("message", ""),
+            payload=payload,
+        )
         _write_cli_output(payload, json_output=json_output)
         return 0 if payload["ok"] else 1
 
@@ -2142,7 +2159,9 @@ def _api_order_dry_run_error_payload(
         "checks": [],
         "errors": [message],
     }
-    return _finalize_api_order_dry_run_payload(payload)
+    return _finalize_api_order_dry_run_payload(
+        _attach_command_record_context(payload, config=config)
+    )
 
 
 def _api_order_precheck_payload(
@@ -2165,12 +2184,15 @@ def _api_order_precheck_payload(
         dict[str, Any]: 事前確認結果用 payload。
     """
 
-    return api_order_precheck_cli._api_order_precheck_payload(
+    return _attach_command_record_context(
+        api_order_precheck_cli._api_order_precheck_payload(
+            config=config,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            halt_state=halt_state,
+        ),
         config=config,
-        symbol=symbol,
-        side=side,
-        quantity=quantity,
-        halt_state=halt_state,
     )
 
 
@@ -2196,14 +2218,83 @@ def _api_order_precheck_error_payload(
         dict[str, Any]: 整形済みのエラーペイロード。
     """
 
-    return api_order_precheck_cli._api_order_precheck_error_payload(
+    return _attach_command_record_context(
+        api_order_precheck_cli._api_order_precheck_error_payload(
+            config=config,
+            message=message,
+            halt_state=halt_state,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+        ),
         config=config,
-        message=message,
-        halt_state=halt_state,
-        symbol=symbol,
-        side=side,
-        quantity=quantity,
     )
+
+
+def _resolve_git_commit() -> str:
+    """現在の Git コミットIDを短縮形式で返す。
+
+    Returns:
+        str: 取得できた場合は短縮コミットID。失敗時は unknown。
+    """
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            check=True,
+            text=True,
+            encoding="utf-8",
+            cwd=Path(__file__).resolve().parent,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    commit = result.stdout.strip()
+    return commit or "unknown"
+
+
+def _build_command_config_summary(config: SystemConfig) -> dict[str, Any]:
+    """記録用の設定要約を生成する。
+
+    Args:
+        config: システム設定。
+
+    Returns:
+        dict[str, Any]: 出力と記録に使う設定要約。
+    """
+
+    return {
+        "trading_mode": config.app.trading_mode.value,
+        "data_source_mode": config.app.data_source_mode.value,
+        "kabu_api_environment": config.app.kabu_api.environment.value,
+        "token_env_name": config.app.kabu_api.token_env_name,
+        "trade_symbols": list(config.app.trade_symbols),
+        "max_order_quantity": config.app.max_order_quantity,
+    }
+
+
+def _attach_command_record_context(
+    payload: dict[str, Any],
+    config: SystemConfig,
+) -> dict[str, Any]:
+    """CLI 記録用メタ情報を payload に付与する。
+
+    Args:
+        payload: 付与対象の payload。
+        config: システム設定。
+
+    Returns:
+        dict[str, Any]: 記録用メタ情報を含む payload。
+    """
+
+    payload.setdefault("executed_at", datetime.now().astimezone().isoformat())
+    payload.setdefault("git_commit", _resolve_git_commit())
+    payload.setdefault("config_summary", _build_command_config_summary(config))
+    payload.setdefault(
+        "record_hint",
+        "docs/paper_api_test_record_template.md に結果を記録してください",
+    )
+    return payload
 
 
 def _append_api_order_precheck_check(
@@ -2521,12 +2612,18 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
     if payload.get("command") == "api-order-precheck":
         sys.stdout.write(f"command: {payload['command']}\n")
         sys.stdout.write(f"ok: {payload['ok']}\n")
+        sys.stdout.write(f"executed_at: {payload.get('executed_at', '')}\n")
+        sys.stdout.write(f"git_commit: {payload.get('git_commit', 'unknown')}\n")
         sys.stdout.write(f"trading_mode: {payload['trading_mode']}\n")
         sys.stdout.write(f"kabu_api_environment: {payload['kabu_api_environment']}\n")
         sys.stdout.write(f"base_url: {payload['base_url']}\n")
         sys.stdout.write(f"symbol: {payload['symbol']}\n")
         sys.stdout.write(f"side: {payload['side']}\n")
         sys.stdout.write(f"quantity: {payload['quantity']}\n")
+        if payload.get("config_summary"):
+            sys.stdout.write("config_summary:\n")
+            for key, value in payload["config_summary"].items():
+                sys.stdout.write(f"  - {key}: {value}\n")
         if payload.get("checks"):
             sys.stdout.write("checks:\n")
             for check in payload["checks"]:
@@ -2541,16 +2638,24 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
             sys.stdout.write("next_action:\n")
             for action in payload["next_action"]:
                 sys.stdout.write(f"  - {action}\n")
+        if payload.get("record_hint"):
+            sys.stdout.write(f"record_hint: {payload['record_hint']}\n")
         return
     if payload.get("command") == "api-order-dry-run":
         sys.stdout.write(f"command: {payload['command']}\n")
         sys.stdout.write(f"ok: {payload['ok']}\n")
+        sys.stdout.write(f"executed_at: {payload.get('executed_at', '')}\n")
+        sys.stdout.write(f"git_commit: {payload.get('git_commit', 'unknown')}\n")
         sys.stdout.write(f"trading_mode: {payload['trading_mode']}\n")
         sys.stdout.write(f"kabu_api_environment: {payload['kabu_api_environment']}\n")
         sys.stdout.write(f"base_url: {payload['base_url']}\n")
         sys.stdout.write(f"symbol: {payload['symbol']}\n")
         sys.stdout.write(f"side: {payload['side']}\n")
         sys.stdout.write(f"quantity: {payload['quantity']}\n")
+        if payload.get("config_summary"):
+            sys.stdout.write("config_summary:\n")
+            for key, value in payload["config_summary"].items():
+                sys.stdout.write(f"  - {key}: {value}\n")
         sys.stdout.write(f"order_id: {payload['order_id']}\n")
         sys.stdout.write(f"order_status: {payload['order_status']}\n")
         sys.stdout.write(f"filled_quantity: {payload['filled_quantity']}\n")
@@ -2580,6 +2685,8 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
             sys.stdout.write("log_hint:\n")
             for hint in payload["log_hint"]:
                 sys.stdout.write(f"  - {hint}\n")
+        if payload.get("record_hint"):
+            sys.stdout.write(f"record_hint: {payload['record_hint']}\n")
         return
     sys.stdout.write(f"ok: {payload['ok']}\n")
     sys.stdout.write(f"is_halted: {payload['is_halted']}\n")
@@ -2608,9 +2715,27 @@ def _log_operational_command(
     result: str,
     reason: str,
     message: str,
+    payload: dict[str, Any] | None = None,
 ) -> None:
     """運用コマンド実行結果をログ出力する。"""
 
+    if payload is not None and command in {"api-order-precheck", "api-order-dry-run"}:
+        logger.info(
+            "operational command command=%s executed_at=%s git_commit=%s symbol=%s side=%s quantity=%s order_id=%s order_status=%s reconciliation_result=%s result=%s reason=%s message=%s",
+            command,
+            payload.get("executed_at", ""),
+            payload.get("git_commit", "unknown"),
+            payload.get("symbol", ""),
+            payload.get("side", ""),
+            payload.get("quantity", 0),
+            payload.get("order_id", ""),
+            payload.get("order_status", ""),
+            payload.get("reconciliation_result", "UNKNOWN"),
+            result,
+            reason,
+            message,
+        )
+        return
     logger.info(
         "operational command command=%s result=%s reason=%s message=%s",
         command,

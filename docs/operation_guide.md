@@ -258,6 +258,49 @@ python main.py api-order-precheck --symbol 1306 --quantity 10
 python main.py api-order-precheck --symbol 1570 --quantity 1 --json
 ```
 
+出力には `executed_at`、`git_commit`、`config_summary`、`record_hint` が含まれます。  
+`record_hint` に従って `docs/paper_api_test_record_template.md` へ結果を記録してください。
+
+## paper検証API実行チェックリスト
+
+### 実行前
+
+- [ ] kabuステーションを検証モードで起動している
+- [ ] `config/app.yaml` の `kabu_api_environment` が `paper`
+- [ ] `config/app.yaml` の `token_env_name` が `KABU_API_PASSWORD_PAPER`
+- [ ] 環境変数 `KABU_API_PASSWORD_PAPER` を設定済み
+- [ ] `trading_mode` が `live`
+- [ ] `live_enabled` が `true`
+- [ ] `data_source_mode` が `api`
+- [ ] `trade_symbols` に対象銘柄が含まれている
+- [ ] `max_order_quantity` が検証用として安全な値
+- [ ] 取引停止状態ではない
+
+### precheck
+
+- [ ] `api-order-precheck` を実行した
+- [ ] `ok=true` である
+- [ ] `checks` がすべて `OK` である
+- [ ] `next_action` が `api-order-dry-run` 実行可能になっている
+
+### dry-run
+
+- [ ] `api-order-dry-run` を実行した
+- [ ] `ok=true` または想定内の結果である
+- [ ] `order_id` が取得できた
+- [ ] `order_status` を確認した
+- [ ] `filled_quantity` / `remaining_quantity` を確認した
+- [ ] `reconciliation_result` を確認した
+- [ ] `is_halted` が `false` である
+
+### 実行後
+
+- [ ] `halt-status` を実行した
+- [ ] 必要に応じて `preflight-check` を実行した
+- [ ] 未完了注文が残っている場合は同一銘柄で再実行しない
+- [ ] 異常があればログを確認した
+- [ ] 検証結果を記録した
+
 ## 設定サンプル
 
 用途別の参照用サンプルは `config/samples` に配置しています。
@@ -282,6 +325,10 @@ paper 検証 API の例:
 
 - `python main.py api-order-precheck --symbol 1321 --quantity 1`
 - `python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1`
+
+記録:
+
+- `api-order-precheck` / `api-order-dry-run` の結果は `docs/paper_api_test_record_template.md` に記録してください。
 
 live 本番 API の注意:
 
@@ -411,6 +458,12 @@ live 本番 API の注意:
 - YAML には直接書かないでください。
 - paper / live で環境変数名を分けてください。
 
+### 検証結果メモテンプレート
+
+- `docs/paper_api_test_record_template.md` は、paper検証APIの確認結果を残すためのテンプレートです。
+- `executed_at`、`git_commit`、`symbol`、`quantity`、`order_id`、`order_status`、`reconciliation_result` を CLI 出力から転記してください。
+- 異常時は `halt-status` の結果とログ確認結果も必ず残してください。
+
 ### 設定変更後の確認コマンド
 
 paper 検証 API の場合:
@@ -422,6 +475,8 @@ paper 検証 API の場合:
 
 - `api-order-precheck` が NG の場合は、`next_action` と `errors` を確認して設定を修正してから再実行してください。
 - paper 検証APIでは `KABU_API_PASSWORD_PAPER` を使い、PowerShell で先に環境変数を設定してください。
+- 未完了注文が残っている場合は同一銘柄で再実行しないでください。
+- 異常があれば `halt-status` とログを確認してから記録を残してください。
 
 live 本番 API の場合:
 

@@ -1,4 +1,5 @@
 import io
+import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -448,6 +449,17 @@ def test_main_api_order_dry_run_outputs_json(monkeypatch) -> None:
         api_order_dry_run_result={
             "ok": True,
             "command": "api-order-dry-run",
+            "executed_at": "2026-04-26T10:00:00+09:00",
+            "git_commit": "abc1234",
+            "config_summary": {
+                "trading_mode": config.app.trading_mode.value,
+                "data_source_mode": config.app.data_source_mode.value,
+                "kabu_api_environment": config.app.kabu_api.environment.value,
+                "token_env_name": config.app.kabu_api.token_env_name,
+                "trade_symbols": list(config.app.trade_symbols),
+                "max_order_quantity": config.app.max_order_quantity,
+            },
+            "record_hint": "docs/paper_api_test_record_template.md に結果を記録してください",
             "symbol": "1321",
             "side": "BUY",
             "quantity": 1,
@@ -496,6 +508,10 @@ def test_main_api_order_dry_run_outputs_json(monkeypatch) -> None:
     assert exit_code == 0
     assert fake_runtime.api_order_dry_run_calls == [("1321", "BUY", 1, None)]
     assert '"command": "api-order-dry-run"' in output.getvalue()
+    assert '"executed_at": "2026-04-26T10:00:00+09:00"' in output.getvalue()
+    assert '"git_commit": "abc1234"' in output.getvalue()
+    assert '"config_summary": {' in output.getvalue()
+    assert '"record_hint": "docs/paper_api_test_record_template.md に結果を記録してください"' in output.getvalue()
     assert '"order_id": "api-order-1"' in output.getvalue()
     assert '"next_action": [' in output.getvalue()
     assert '"時間を置いて注文状態同期を確認してください"' in output.getvalue()
@@ -511,6 +527,17 @@ def test_main_api_order_precheck_outputs_json(monkeypatch) -> None:
         api_order_precheck_result={
             "ok": True,
             "command": "api-order-precheck",
+            "executed_at": "2026-04-26T10:00:00+09:00",
+            "git_commit": "abc1234",
+            "config_summary": {
+                "trading_mode": config.app.trading_mode.value,
+                "data_source_mode": config.app.data_source_mode.value,
+                "kabu_api_environment": config.app.kabu_api.environment.value,
+                "token_env_name": config.app.kabu_api.token_env_name,
+                "trade_symbols": list(config.app.trade_symbols),
+                "max_order_quantity": config.app.max_order_quantity,
+            },
+            "record_hint": "docs/paper_api_test_record_template.md に結果を記録してください",
             "trading_mode": config.app.trading_mode.value,
             "kabu_api_environment": config.app.kabu_api.environment.value,
             "base_url": config.app.kabu_api.base_url,
@@ -546,6 +573,10 @@ def test_main_api_order_precheck_outputs_json(monkeypatch) -> None:
     assert exit_code == 0
     assert fake_runtime.api_order_precheck_calls == [("1321", "BUY", 1)]
     assert '"command": "api-order-precheck"' in output.getvalue()
+    assert '"executed_at": "2026-04-26T10:00:00+09:00"' in output.getvalue()
+    assert '"git_commit": "abc1234"' in output.getvalue()
+    assert '"config_summary": {' in output.getvalue()
+    assert '"record_hint": "docs/paper_api_test_record_template.md に結果を記録してください"' in output.getvalue()
     assert '"token_env_name_is_paper"' in output.getvalue()
     assert '"next_action": ["api-order-dry-run を実行できます"]' in output.getvalue()
 
@@ -952,6 +983,45 @@ def test_main_still_fails_on_normal_start_when_api_password_is_missing(
     assert fake_logger.messages == ["application initialization failed"]
 
 
+def test_resolve_git_commit_returns_unknown_on_failure(monkeypatch) -> None:
+    def raise_os_error(*args, **kwargs):
+        raise OSError("git is unavailable")
+
+    monkeypatch.setattr(app_main.subprocess, "run", raise_os_error)
+
+    assert app_main._resolve_git_commit() == "unknown"
+
+
+def test_build_command_config_summary_does_not_include_api_password_value(
+    monkeypatch,
+) -> None:
+    config = load_config(Path("config"))
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "super-secret-password")
+
+    summary = app_main._build_command_config_summary(config)
+    dumped = json.dumps(summary, ensure_ascii=False)
+
+    assert "super-secret-password" not in dumped
+
+
+def test_write_cli_output_does_not_include_api_password_value(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "super-secret-password")
+    payload = app_main._api_order_precheck_payload(
+        config=config,
+        symbol="1321",
+        side="BUY",
+        quantity=1,
+        halt_state=TradingHaltState(),
+    )
+    output = io.StringIO()
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    app_main._write_cli_output(payload, json_output=True)
+
+    assert "super-secret-password" not in output.getvalue()
+
+
 def test_operation_guide_mentions_api_order_dry_run_follow_up_steps() -> None:
     guide = Path("docs/operation_guide.md").read_text(encoding="utf-8")
 
@@ -967,6 +1037,13 @@ def test_operation_guide_mentions_api_order_precheck() -> None:
     assert "api-order-dry-run 実行前" in guide
     assert "注文は送信しません" in guide
     assert "KABU_API_PASSWORD_PAPER" in guide
+    assert "paper検証API実行チェックリスト" in guide
+
+
+def test_paper_api_test_record_template_exists() -> None:
+    template_path = Path("docs/paper_api_test_record_template.md")
+
+    assert template_path.exists()
 
 
 class _FakeRuntime:

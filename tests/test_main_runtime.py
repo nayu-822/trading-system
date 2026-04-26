@@ -765,6 +765,10 @@ def test_runtime_api_order_precheck_returns_ok_for_paper_environment(monkeypatch
     resources = _current_dry_run_resources()
 
     assert payload["ok"] is True
+    assert payload["executed_at"]
+    assert payload["git_commit"]
+    assert payload["config_summary"]["token_env_name"] == "KABU_API_PASSWORD_PAPER"
+    assert payload["record_hint"] == "docs/paper_api_test_record_template.md に結果を記録してください"
     assert payload["next_action"] == ["api-order-dry-run を実行できます"]
     assert resources.gateway.place_order_calls == 0
     assert runtime.trading_process.get_state("1321").orders == []
@@ -1365,6 +1369,10 @@ def test_runtime_api_order_dry_run_calls_order_sync_and_reconciliation_on_succes
     resources = _current_dry_run_resources()
 
     assert payload["ok"] is True
+    assert payload["executed_at"]
+    assert payload["git_commit"]
+    assert payload["config_summary"]["token_env_name"] == "KABU_API_PASSWORD"
+    assert payload["record_hint"] == "docs/paper_api_test_record_template.md に結果を記録してください"
     assert resources.gateway.place_order_calls == 1
     assert resources.order_status_repository.get_order_status_calls == 1
     assert resources.position_reconciliation_service.call_count >= 2
