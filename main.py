@@ -1779,7 +1779,7 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(CONFIG_DIR)
         logger = setup_logger(config.app.log_level, process_name=EventSource.MAIN.value)
         if arguments:
-            if arguments[0] in {"api-order-precheck", "config-summary"}:
+            if arguments[0] in {"api-order-precheck", "config-summary", "paper-runbook"}:
                 validate_config(config, allow_missing_api_password=True)
             return _run_operational_command(arguments, config=config, logger=logger)
         initialize_application(block_api=True)
@@ -1811,6 +1811,7 @@ def _run_operational_command(
         "resume",
         "preflight-check",
         "config-summary",
+        "paper-runbook",
         "api-order-precheck",
         "api-order-dry-run",
     }:
@@ -1829,6 +1830,18 @@ def _run_operational_command(
         )
         _write_cli_output(payload, json_output=json_output)
         return 0 if payload["ok"] else 1
+
+    if command == "paper-runbook":
+        payload = _paper_runbook_payload()
+        _log_operational_command(
+            logger=logger,
+            command=command,
+            result="ok",
+            reason="",
+            message="paper runbook generated",
+        )
+        _write_cli_output(payload, json_output=json_output)
+        return 0
 
     snapshot_store = OperationalSnapshotStore(
         config=config,
@@ -3037,6 +3050,107 @@ def _config_summary_payload(config: SystemConfig) -> dict[str, Any]:
     return payload
 
 
+def _paper_runbook_payload() -> dict[str, Any]:
+    """paper 検証API実行前の runbook を返す。
+
+    Returns:
+        dict[str, Any]: paper-runbook 出力用 payload。
+    """
+
+    return {
+        "command": "paper-runbook",
+        "ok": True,
+        "steps": [
+            {
+                "step": 1,
+                "title": "現在設定の確認",
+                "command": "python main.py config-summary",
+                "purpose": [
+                    "config/app.yaml の解釈結果を確認する",
+                    "paper / live のどちらを向いているか確認する",
+                    "token_env_name と token_env_exists を確認する",
+                ],
+                "requires_api": False,
+                "calls_order_api": False,
+                "can_save_result": False,
+            },
+            {
+                "step": 2,
+                "title": "paper検証API向けの事前確認",
+                "command": "python main.py api-order-precheck --symbol 1321 --quantity 1",
+                "purpose": [
+                    "検証API 18081 向けの設定・環境変数・銘柄・数量・API読み取り系を確認する"
+                ],
+                "requires_api": True,
+                "calls_order_api": False,
+                "can_save_result": True,
+            },
+            {
+                "step": 3,
+                "title": "注文フローの確認",
+                "command": "python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1",
+                "purpose": [
+                    "検証API 18081 に対して1回だけ注文フローを確認する"
+                ],
+                "requires_api": True,
+                "calls_order_api": True,
+                "can_save_result": True,
+            },
+            {
+                "step": 4,
+                "title": "結果保存ありの実行",
+                "command": [
+                    "python main.py api-order-precheck --symbol 1321 --quantity 1 --save-result",
+                    "python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1 --save-result",
+                ],
+                "purpose": ["検証結果を logs/paper_api_results/ にJSON保存する"],
+                "requires_api": True,
+                "calls_order_api": True,
+                "can_save_result": True,
+            },
+            {
+                "step": 5,
+                "title": "実行後確認",
+                "command": [
+                    "python main.py halt-status",
+                    "python main.py preflight-check",
+                ],
+                "purpose": ["取引停止状態や全体状態を確認する"],
+                "requires_api": False,
+                "calls_order_api": False,
+                "can_save_result": False,
+            },
+        ],
+        "recommended_quantities": {
+            "1306": {
+                "quantity": 10,
+                "note": "1306 は10口単位です",
+            },
+            "1321": {
+                "quantity": 1,
+                "note": "1321 は検証時は1口推奨です",
+            },
+            "1570": {
+                "quantity": 1,
+                "note": "1570 は検証時は1口推奨です",
+            },
+        },
+        "warnings": [
+            "api-order-dry-run は本番API 18080では実行できません",
+            "未完了注文が残っている場合は同一銘柄で api-order-dry-run を再実行しないでください",
+        ],
+        "docs": [
+            "docs/operation_guide.md",
+            "docs/paper_api_test_record_template.md",
+        ],
+        "notes": [
+            "config-summary がNGの場合は token_env_name、token_env_exists、kabu_api_environment、data_source_mode、trading_mode、live_enabled を確認し、docs/operation_guide.md を参照してください",
+            "api-order-precheck がNGの場合は dry-run を実行せず、next_action に従って設定を直し、kabuステーションが検証モードで起動しているか確認してください",
+            "api-order-dry-run がNGの場合は halt-status、logs/app.log または設定されたログ出力先、保存JSONを確認してください",
+        ],
+    }
+
+
 def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
     """CLI 出力を標準出力へ書き出す。"""
 
@@ -3044,6 +3158,38 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
     if json_output:
         sys.stdout.write(json.dumps(payload, ensure_ascii=False))
         sys.stdout.write("\n")
+        return
+    if payload.get("command") == "paper-runbook":
+        sys.stdout.write(f"command: {payload['command']}\n")
+        sys.stdout.write(f"ok: {payload['ok']}\n")
+        if payload.get("steps"):
+            sys.stdout.write("steps:\n")
+            for step in payload["steps"]:
+                sys.stdout.write(f"  - step: {step['step']}\n")
+                sys.stdout.write(f"    title: {step['title']}\n")
+                sys.stdout.write(f"    command: {step['command']}\n")
+                sys.stdout.write(f"    purpose: {step['purpose']}\n")
+                sys.stdout.write(f"    requires_api: {step['requires_api']}\n")
+                sys.stdout.write(f"    calls_order_api: {step['calls_order_api']}\n")
+                sys.stdout.write(f"    can_save_result: {step['can_save_result']}\n")
+        if payload.get("recommended_quantities"):
+            sys.stdout.write("recommended_quantities:\n")
+            for symbol, details in payload["recommended_quantities"].items():
+                sys.stdout.write(
+                    f"  - {symbol}: quantity={details['quantity']} {details['note']}\n"
+                )
+        if payload.get("warnings"):
+            sys.stdout.write("warnings:\n")
+            for warning in payload["warnings"]:
+                sys.stdout.write(f"  - {warning}\n")
+        if payload.get("docs"):
+            sys.stdout.write("docs:\n")
+            for document in payload["docs"]:
+                sys.stdout.write(f"  - {document}\n")
+        if payload.get("notes"):
+            sys.stdout.write("notes:\n")
+            for note in payload["notes"]:
+                sys.stdout.write(f"  - {note}\n")
         return
     if payload.get("command") == "config-summary":
         sys.stdout.write(f"command: {payload['command']}\n")

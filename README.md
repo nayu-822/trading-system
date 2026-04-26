@@ -7,6 +7,8 @@
 ## paper検証APIクイックスタート
 paper検証APIは、kabuステーションAPIの検証環境です。`kabu_api_environment: paper` は検証PORT `18081` を使い、`live` の本番API `18080` とは別です。paper は本番市場への実注文ではありませんが、通常起動でいきなり自動売買を始めるのではなく、まず `api-order-precheck` と `api-order-dry-run` で確認してください。詳細な運用手順、設定切替、live本番APIの注意点は [docs/operation_guide.md](docs/operation_guide.md) を参照してください。
 
+実行前に `python main.py paper-runbook` を実行すると、paper検証APIの実行順をCLIで確認できます。
+
 ### 最低限の設定確認
 - `trading_mode: live`
 - `live_enabled: true`
@@ -29,6 +31,7 @@ $env:KABU_API_PASSWORD_PAPER="検証用APIパスワード"
 1. 現在設定の確認
 
 ```bash
+python main.py paper-runbook
 python main.py config-summary
 ```
 

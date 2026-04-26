@@ -263,6 +263,55 @@ def test_main_config_summary_does_not_call_order_or_position_apis(monkeypatch) -
     assert "command: config-summary" in output.getvalue()
 
 
+def test_main_paper_runbook_outputs_text(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: (_ for _ in ()).throw(
+            AssertionError("runtime should not be built")
+        ),
+    )
+    monkeypatch.setattr(
+        app_main.KabuApiClient,
+        "get_token",
+        lambda self: (_ for _ in ()).throw(AssertionError("token should not be fetched")),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["paper-runbook"])
+
+    assert exit_code == 0
+    assert "command: paper-runbook" in output.getvalue()
+    assert "python main.py config-summary" in output.getvalue()
+    assert "python main.py api-order-precheck --symbol 1321 --quantity 1" in output.getvalue()
+    assert "python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1" in output.getvalue()
+    assert "python main.py halt-status" in output.getvalue()
+
+
+def test_main_paper_runbook_outputs_json(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["paper-runbook", "--json"])
+
+    assert exit_code == 0
+    assert '"command": "paper-runbook"' in output.getvalue()
+    assert '"recommended_quantities": {' in output.getvalue()
+    assert '"1306": {' in output.getvalue()
+    assert '"quantity": 10' in output.getvalue()
+    assert '"1321": {' in output.getvalue()
+    assert '"1570": {' in output.getvalue()
+
+
 def test_main_halt_sets_manual_halt_and_saves_snapshot(monkeypatch) -> None:
     config = replace(
         load_config(Path("config")),
@@ -1318,6 +1367,24 @@ def test_main_config_summary_outputs_json_when_api_password_is_missing(
     assert '"KABU_API_PASSWORD_PAPER"' in output.getvalue()
 
 
+def test_paper_runbook_payload_contains_expected_steps() -> None:
+    payload = app_main._paper_runbook_payload()
+    commands = json.dumps(payload, ensure_ascii=False)
+
+    assert "config-summary" in commands
+    assert "api-order-precheck" in commands
+    assert "api-order-dry-run" in commands
+    assert "halt-status" in commands
+
+
+def test_paper_runbook_payload_contains_recommended_quantities() -> None:
+    payload = app_main._paper_runbook_payload()
+
+    assert payload["recommended_quantities"]["1306"]["quantity"] == 10
+    assert payload["recommended_quantities"]["1321"]["quantity"] == 1
+    assert payload["recommended_quantities"]["1570"]["quantity"] == 1
+
+
 def test_write_cli_output_does_not_include_api_password_value(monkeypatch) -> None:
     config = load_config(Path("config"))
     monkeypatch.setenv(config.app.kabu_api.token_env_name, "super-secret-password")
@@ -1867,11 +1934,25 @@ def test_operation_guide_mentions_config_summary() -> None:
     assert "API接続や注文は行いません" in guide
 
 
+def test_operation_guide_mentions_paper_runbook() -> None:
+    guide = Path("docs/operation_guide.md").read_text(encoding="utf-8")
+
+    assert "paper-runbook" in guide
+    assert "手順確認用コマンド" in guide
+
+
 def test_readme_mentions_config_summary_examples() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
 
     assert "config-summary" in readme
     assert "python main.py config-summary" in readme
+
+
+def test_readme_mentions_paper_runbook() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "paper-runbook" in readme
+    assert "python main.py paper-runbook" in readme
 
 
 def test_paper_api_test_record_template_exists() -> None:

@@ -158,6 +158,31 @@ python main.py config-summary --json
 - `warnings`
 - `next_action`
 
+## paper-runbook
+
+`paper-runbook` は、paper検証APIの手順確認用コマンドです。
+- API接続や注文API呼び出しは行いません
+- 実際の precheck や dry-run は実行しません
+- 実行前に、どの順番で何を確認するかを CLI で見たいときに使います
+
+実行例:
+
+```bash
+python main.py paper-runbook
+python main.py paper-runbook --json
+```
+
+主な表示内容:
+
+- `config-summary` -> `api-order-precheck` -> `api-order-dry-run` の順序
+- 各コマンドの目的
+- API接続の有無
+- 注文API呼び出しの有無
+- `--save-result` を使えるか
+- `1306=10`、`1321=1`、`1570=1` の推奨数量
+- 異常時に確認するコマンド
+- 詳細ドキュメントへの案内
+
 運用上の原則:
 
 - API障害中はまず `halt-status` で現在の停止状態を確認する
