@@ -282,3 +282,164 @@ live 本番 API の注意:
 
 - live サンプルは実注文が市場へ送信される可能性があります。
 - 実行前に `trade_symbols` / `max_order_quantity` / `kabu_api_environment` を必ず確認してください。
+
+## 設定切替手順
+
+### 設定サンプルの位置づけ
+
+- `config/samples` 配下のファイルは参考用です。
+- アプリが通常読み込むのは `config/app.yaml` です。
+- サンプルファイルを自動で切り替えて読み込む仕組みはありません。
+- 実行前にサンプル内容を確認し、必要な項目だけを `config/app.yaml` に反映してください。
+- 実パスワードはサンプルにも `config/app.yaml` にも書かず、環境変数で管理してください。
+
+### ユースケース別の使い分け
+
+- CSVローカル確認用: `config/samples/app.csv-paper.sample.yaml`
+  API を使わず、実注文もしません。初回のローカル確認向けです。
+- 検証API接続確認用: `config/samples/app.api-paper.sample.yaml`
+  kabuステーション検証 API 18081 で接続・建玉取得・注文状態取得を確認します。
+- 検証API注文フロー確認用: `config/samples/app.api-paper-dry-run.sample.yaml`
+  `api-order-precheck` / `api-order-dry-run` の実行前提をまとめた参考設定です。
+- 本番API少額確認用: `config/samples/app.api-live-small.sample.yaml`
+  本番 API 18080 向けです。実注文が市場へ送信される可能性があります。
+- バックテスト確認用: `config/samples/app.backtest.sample.yaml`
+  CSV ベースで検証ロジックを確認する安全寄りの参考設定です。
+
+### paper / live 切替時に確認する項目
+
+| 項目名 | 意味 | paper検証APIでの推奨値 | live本番APIでの推奨値 | 注意点 |
+| --- | --- | --- | --- | --- |
+| `trading_mode` | 注文系の実行モード | `live` | `live` | `paper` にすると実注文系処理を使いません。検証API接続確認や dry-run では `live` が必要です。 |
+| `live_enabled` | live系処理の安全スイッチ | `true` | `true` | `trading_mode=live` では必須です。迷う場合は `false` のままにして見直してください。 |
+| `data_source_mode` | 市場データ取得元 | `api` | `api` | CSV 確認では `csv` を使います。本番・検証API切替では `api` が必要です。 |
+| `kabu_api_environment` | kabu API の接続先 | `paper` | `live` | `paper` は通常 18081、`live` は通常 18080 です。最重要確認項目です。 |
+| `token_env_name` | APIパスワードの参照先環境変数名 | `KABU_API_PASSWORD_PAPER` | `KABU_API_PASSWORD_LIVE` | YAML に実パスワードを書かないでください。paper / live を混同しないでください。 |
+| `trade_symbols` | 注文許可対象銘柄 | `1306`, `1321`, `1570` | 最小限の銘柄 | 本番では本当に取引したい銘柄だけに絞ってください。 |
+| `max_order_quantity` | 1回あたりの最大注文数量 | `10` | `1` | 本番は特に小さく始めてください。 |
+| `position_reconciliation_enabled` | API建玉と内部建玉の突合 | `true` | `true` | 通常は無効化しないでください。 |
+| `position_average_price_tolerance` | 平均取得単価の許容誤差 | `0.01` | `0.01` | 変更する場合は突合ロジックへの影響を理解してから行ってください。 |
+
+### CSVローカル確認用の設定
+
+- 参考ファイル: `config/samples/app.csv-paper.sample.yaml`
+- 想定値:
+  - `trading_mode: paper`
+  - `live_enabled: false`
+  - `data_source_mode: csv`
+  - `kabu_api_environment: paper`
+  - `token_env_name: KABU_API_PASSWORD_PAPER`
+- CSV ローカル確認では kabuステーション起動は不要です。
+- API パスワードは通常使われない可能性がありますが、YAML へ直接は書きません。
+
+### 検証API接続確認用の設定
+
+- 参考ファイル: `config/samples/app.api-paper.sample.yaml`
+- 想定値:
+  - `trading_mode: live`
+  - `live_enabled: true`
+  - `data_source_mode: api`
+  - `kabu_api_environment: paper`
+  - `token_env_name: KABU_API_PASSWORD_PAPER`
+  - `trade_symbols: 1306, 1321, 1570`
+  - `max_order_quantity: 10`
+- `kabu_api_environment=paper` は検証 API 18081 を意味します。
+- 本番市場には発注しません。
+
+### 検証API注文フロー確認用の設定
+
+- 参考ファイル: `config/samples/app.api-paper-dry-run.sample.yaml`
+- 想定値:
+  - `trading_mode: live`
+  - `live_enabled: true`
+  - `data_source_mode: api`
+  - `kabu_api_environment: paper`
+  - `token_env_name: KABU_API_PASSWORD_PAPER`
+  - `trade_symbols: 1306, 1321, 1570`
+  - `max_order_quantity: 10`
+  - `position_reconciliation_enabled: true`
+  - `position_average_price_tolerance: 0.01`
+- `kabu_api_environment=paper` は検証PORT 18081 です。
+- `api-order-precheck` / `api-order-dry-run` で確認します。
+
+### 本番API少額確認用の設定
+
+- 参考ファイル: `config/samples/app.api-live-small.sample.yaml`
+- 想定値:
+  - `trading_mode: live`
+  - `live_enabled: true`
+  - `data_source_mode: api`
+  - `kabu_api_environment: live`
+  - `token_env_name: KABU_API_PASSWORD_LIVE`
+  - `trade_symbols: 最小限の銘柄`
+  - `max_order_quantity: 1`
+  - `position_reconciliation_enabled: true`
+  - `position_average_price_tolerance: 0.01`
+- `kabu_api_environment=live` は本番PORT 18080 です。
+- 実注文が市場へ送信される可能性があります。
+- 最初は 1 銘柄・最小数量にしてください。
+- 実行前に `halt-status` と `preflight-check` を必ず実行してください。
+- 本番用 API パスワードを使い、検証用と混同しないでください。
+
+### バックテスト確認用の設定
+
+- 参考ファイル: `config/samples/app.backtest.sample.yaml`
+- 想定値:
+  - `trading_mode: paper`
+  - `live_enabled: false`
+  - `data_source_mode: csv`
+  - `kabu_api_environment: paper`
+  - `token_env_name: KABU_API_PASSWORD_PAPER`
+- API 接続・API 注文は行いません。
+
+### PowerShell での環境変数設定例
+
+- paper 用:
+  - `$env:KABU_API_PASSWORD_PAPER="検証用APIパスワード"`
+- live 用:
+  - `$env:KABU_API_PASSWORD_LIVE="本番用APIパスワード"`
+
+注意:
+
+- 実パスワードは Git にコミットしないでください。
+- YAML には直接書かないでください。
+- paper / live で環境変数名を分けてください。
+
+### 設定変更後の確認コマンド
+
+paper 検証 API の場合:
+
+- `python main.py api-order-precheck --symbol 1321 --quantity 1`
+- `python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1`
+
+live 本番 API の場合:
+
+- `python main.py halt-status`
+- `python main.py preflight-check`
+
+補足:
+
+- 本番 API では `api-order-dry-run` は使えません。
+
+### paper から live へ切り替える前のチェックリスト
+
+- [ ] `kabu_api_environment` が `live` になっている
+- [ ] `token_env_name` が `KABU_API_PASSWORD_LIVE` になっている
+- [ ] `data_source_mode` が `api` になっている
+- [ ] `trading_mode` が `live` になっている
+- [ ] `live_enabled` が `true` になっている
+- [ ] `trade_symbols` が本当に取引したい銘柄だけになっている
+- [ ] `max_order_quantity` が小さい値になっている
+- [ ] `position_reconciliation_enabled` が `true` になっている
+- [ ] `halt-status` で取引停止状態を確認した
+- [ ] `preflight-check` が成功した
+- [ ] API パスワード・トークンがログに出ていない
+
+### live から paper に戻すときのチェックリスト
+
+- [ ] `kabu_api_environment` が `paper` になっている
+- [ ] `token_env_name` が `KABU_API_PASSWORD_PAPER` になっている
+- [ ] `trade_symbols` が検証用銘柄になっている
+- [ ] `max_order_quantity` が検証用の安全な値になっている
+- [ ] `data_source_mode` が意図どおり `api` または `csv` になっている
+- [ ] kabuステーションを検証モードで起動している
