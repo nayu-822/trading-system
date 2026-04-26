@@ -1349,6 +1349,155 @@ def test_main_api_order_dry_run_save_result_failure_preserves_order_result(
     assert payload["save_error"] == "save failed"
 
 
+def test_save_paper_api_result_payload_avoids_overwrite_for_same_payload() -> None:
+    base_dir = Path("tests/.tmp_main_cli/paper_api_results_collision")
+    if base_dir.exists():
+        for path in base_dir.rglob("*"):
+            if path.is_file():
+                path.unlink()
+        for path in sorted(base_dir.rglob("*"), reverse=True):
+            if path.is_dir():
+                path.rmdir()
+    payload = {
+        "ok": True,
+        "command": "api-order-precheck",
+        "executed_at": "2026-04-26T12:34:56.123456+09:00",
+        "git_commit": "abc1234",
+        "config_summary": {"token_env_name": "KABU_API_PASSWORD_PAPER"},
+        "symbol": "1321",
+        "side": "BUY",
+        "quantity": 1,
+        "checks": [],
+        "errors": [],
+        "next_action": ["api-order-dry-run を実行できます"],
+        "record_hint": "docs/paper_api_test_record_template.md に結果を記録してください",
+        "trading_mode": "live",
+        "kabu_api_environment": "paper",
+        "base_url": "http://localhost:18081/kabusapi",
+        "is_halted": False,
+        "reason": "",
+        "message": "ok",
+    }
+    first_payload = dict(payload)
+    second_payload = dict(payload)
+
+    first_ok = app_main._save_paper_api_result_payload(first_payload, base_dir=base_dir)
+    second_ok = app_main._save_paper_api_result_payload(second_payload, base_dir=base_dir)
+
+    assert first_ok is True
+    assert second_ok is True
+    first_file = Path(first_payload["result_file"])
+    second_file = Path(second_payload["result_file"])
+    assert first_file.exists()
+    assert second_file.exists()
+    assert first_file != second_file
+    assert len(list(base_dir.glob("*.json"))) == 2
+
+
+def test_save_paper_api_result_payload_does_not_overwrite_existing_file() -> None:
+    base_dir = Path("tests/.tmp_main_cli/paper_api_results_no_overwrite")
+    if base_dir.exists():
+        for path in base_dir.rglob("*"):
+            if path.is_file():
+                path.unlink()
+        for path in sorted(base_dir.rglob("*"), reverse=True):
+            if path.is_dir():
+                path.rmdir()
+    payload = {
+        "ok": True,
+        "command": "api-order-dry-run",
+        "executed_at": "2026-04-26T12:34:56+09:00",
+        "git_commit": "abc1234",
+        "config_summary": {"token_env_name": "KABU_API_PASSWORD_PAPER"},
+        "symbol": "1321",
+        "side": "BUY",
+        "quantity": 1,
+        "order_id": "api-order-1",
+        "order_status": "REQUESTED",
+        "filled_quantity": 0,
+        "remaining_quantity": 1,
+        "position_quantity": 0,
+        "position_side": "NONE",
+        "reconciliation_result": "OK",
+        "is_halted": False,
+        "halt_reason": "",
+        "checks": [],
+        "errors": [],
+        "next_action": ["preflight-check を実行して状態を再確認してください"],
+        "log_hint": ["command=api-order-dry-run で検索してください"],
+        "record_hint": "docs/paper_api_test_record_template.md に結果を記録してください",
+        "trading_mode": "live",
+        "kabu_api_environment": "paper",
+        "base_url": "http://localhost:18081/kabusapi",
+    }
+    original_path = app_main._build_paper_api_result_file_path(payload, base_dir=base_dir)
+    original_path.parent.mkdir(parents=True, exist_ok=True)
+    original_path.write_text("original", encoding="utf-8")
+
+    save_ok = app_main._save_paper_api_result_payload(payload, base_dir=base_dir)
+
+    assert save_ok is True
+    assert original_path.read_text(encoding="utf-8") == "original"
+    assert Path(payload["result_file"]) != original_path
+    assert Path(payload["result_file"]).exists()
+
+
+def test_save_paper_api_result_payload_result_file_points_to_actual_saved_file() -> None:
+    base_dir = Path("tests/.tmp_main_cli/paper_api_results_result_file")
+    if base_dir.exists():
+        for path in base_dir.rglob("*"):
+            if path.is_file():
+                path.unlink()
+        for path in sorted(base_dir.rglob("*"), reverse=True):
+            if path.is_dir():
+                path.rmdir()
+    payload = {
+        "ok": True,
+        "command": "api-order-precheck",
+        "executed_at": "2026-04-26T12:34:56.654321+09:00",
+        "git_commit": "abc1234",
+        "config_summary": {"token_env_name": "KABU_API_PASSWORD_PAPER"},
+        "symbol": "1321",
+        "side": "BUY",
+        "quantity": 1,
+        "checks": [],
+        "errors": [],
+        "next_action": ["api-order-dry-run を実行できます"],
+        "record_hint": "docs/paper_api_test_record_template.md に結果を記録してください",
+        "trading_mode": "live",
+        "kabu_api_environment": "paper",
+        "base_url": "http://localhost:18081/kabusapi",
+        "is_halted": False,
+        "reason": "",
+        "message": "ok",
+    }
+
+    save_ok = app_main._save_paper_api_result_payload(payload, base_dir=base_dir)
+
+    assert save_ok is True
+    result_file = Path(payload["result_file"])
+    assert result_file.exists()
+    assert json.loads(result_file.read_text(encoding="utf-8"))["executed_at"] == payload["executed_at"]
+
+
+def test_build_paper_api_result_file_path_sanitizes_unsafe_characters() -> None:
+    base_dir = Path("tests/.tmp_main_cli/paper_api_results_filename")
+    payload = {
+        "command": "api-order-precheck",
+        "executed_at": "2026-04-26T12:34:56.123456+09:00",
+        "symbol": "13/21:*?",
+        "side": "BUY/TEST",
+        "quantity": 1,
+    }
+
+    result_path = app_main._build_paper_api_result_file_path(payload, base_dir=base_dir)
+
+    assert "/" not in result_path.name
+    assert ":" not in result_path.name
+    assert "*" not in result_path.name
+    assert "?" not in result_path.name
+
+
 def test_operation_guide_mentions_api_order_dry_run_follow_up_steps() -> None:
     guide = Path("docs/operation_guide.md").read_text(encoding="utf-8")
 

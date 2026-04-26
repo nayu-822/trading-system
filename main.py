@@ -2349,15 +2349,17 @@ def _sanitize_executed_at_for_result_filename(executed_at: str) -> str:
     """
 
     if not executed_at:
-        return datetime.now().strftime("%Y%m%dT%H%M%S")
+        return datetime.now().strftime("%Y%m%dT%H%M%S%f")
     normalized = executed_at
-    if "." in normalized:
-        normalized = normalized.split(".", 1)[0]
-    if "+" in normalized:
-        normalized = normalized.split("+", 1)[0]
-    if "Z" in normalized:
-        normalized = normalized.replace("Z", "")
-    return normalized.replace("-", "").replace(":", "")
+    timezone_split_index = max(normalized.find("+"), normalized.find("-"))
+    if "T" in normalized and timezone_split_index > normalized.find("T"):
+        normalized = normalized[:timezone_split_index]
+    normalized = normalized.replace("Z", "")
+    return (
+        normalized.replace("-", "")
+        .replace(":", "")
+        .replace(".", "")
+    )
 
 
 def _sanitize_result_filename_component(value: str) -> str:
@@ -2405,6 +2407,26 @@ def _build_paper_api_result_file_path(
         filename_parts.append(_sanitize_result_filename_component(side))
     filename_parts.append(quantity)
     return target_dir / f"{'_'.join(filename_parts)}.json"
+
+
+def _resolve_unique_result_file_path(path: Path) -> Path:
+    """既存ファイルを上書きしない保存先パスを解決する。
+
+    Args:
+        path: 第一候補の保存先パス。
+
+    Returns:
+        Path: 実際に保存に使う一意なファイルパス。
+    """
+
+    if not path.exists():
+        return path
+    suffix = 2
+    while True:
+        candidate = path.with_name(f"{path.stem}_{suffix}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+        suffix += 1
 
 
 def _sanitize_payload_for_result_save(value: Any) -> Any:
@@ -2469,7 +2491,9 @@ def _save_paper_api_result_payload(
 
     _prepare_operational_payload_for_output(payload)
     try:
-        result_path = _build_paper_api_result_file_path(payload, base_dir=base_dir)
+        result_path = _resolve_unique_result_file_path(
+            _build_paper_api_result_file_path(payload, base_dir=base_dir)
+        )
         payload["result_saved"] = True
         payload["result_file"] = str(result_path)
         payload.pop("save_error", None)
