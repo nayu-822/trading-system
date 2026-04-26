@@ -237,3 +237,18 @@ python main.py api-order-dry-run --symbol 1306 --side BUY --quantity 10
 - `1306` は数量 `10`、`1321` / `1570` は数量 `1` を基本にする
 - 本番 API 18080 では `api-order-dry-run` は実行できない
 - kabuステーションを検証モードで起動してから実行する
+
+## api-order-precheck
+
+`api-order-precheck` は、api-order-dry-run 実行前の準備確認をまとめて行うコマンドです。
+
+- 注文は送信しません
+- 検証 API 18081 専用です
+- 本番 API 18080 を向いている場合は NG になります
+- `kabu_api_environment=paper`、`trade_symbols`、数量、停止状態、API 接続、建玉取得、注文状態取得を読み取り専用で確認します
+
+```bash
+python main.py api-order-precheck --symbol 1321 --quantity 1
+python main.py api-order-precheck --symbol 1306 --quantity 10
+python main.py api-order-precheck --symbol 1570 --quantity 1 --json
+```

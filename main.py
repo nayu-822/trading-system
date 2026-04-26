@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from threading import Event
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from data_source.csv_loader import CsvMarketDataLoader
@@ -577,6 +578,181 @@ class ApplicationRuntime:
             "checks": checks,
             "errors": errors,
         }
+
+    def run_api_order_precheck(
+        self,
+        symbol: str,
+        side: OrderSide,
+        quantity: int,
+    ) -> dict[str, Any]:
+        """api-order-dry-run 前の読み取り専用チェックを実行する。
+
+        Args:
+            symbol: 確認対象銘柄コード。
+            side: 想定売買方向。
+            quantity: 想定数量。
+
+        Returns:
+            dict[str, Any]: CLI 出力向けの事前確認結果。
+        """
+
+        halt_state = self.get_trading_halt_state()
+        payload = _api_order_precheck_payload(
+            config=self.config,
+            symbol=symbol,
+            side=side.value,
+            quantity=quantity,
+            halt_state=halt_state,
+        )
+        is_paper_environment = (
+            self.config.app.kabu_api.environment == KabuApiEnvironment.PAPER
+        )
+        self._append_check(
+            payload=payload,
+            name="environment_is_paper",
+            ok=is_paper_environment,
+            message="ok" if is_paper_environment else "kabu_api_environment must be paper",
+        )
+        is_paper_port = _is_paper_api_base_url(self.config.app.kabu_api.base_url)
+        self._append_check(
+            payload=payload,
+            name="base_url_is_paper_port",
+            ok=is_paper_port,
+            message="ok" if is_paper_port else "base_url must point to paper port 18081",
+        )
+        symbol_allowed = symbol in self.config.app.trade_symbols
+        self._append_check(
+            payload=payload,
+            name="symbol_allowed",
+            ok=symbol_allowed,
+            message="ok" if symbol_allowed else "symbol is not in trade_symbols",
+        )
+        quantity_valid = 1 <= quantity <= self.config.app.max_order_quantity
+        self._append_check(
+            payload=payload,
+            name="quantity_valid",
+            ok=quantity_valid,
+            message=(
+                "ok"
+                if quantity_valid
+                else "quantity must be between 1 and max_order_quantity"
+            ),
+        )
+        not_halted = not halt_state.is_halted
+        self._append_check(
+            payload=payload,
+            name="not_halted",
+            ok=not_halted,
+            message="ok" if not_halted else "trading is halted",
+        )
+        if not all(check["ok"] for check in payload["checks"]):
+            return _finalize_api_order_precheck_payload(payload)
+
+        try:
+            resources = _build_api_order_dry_run_resources(
+                config=self.config,
+                logger=self.logger,
+                trading_process=self.trading_process,
+            )
+        except Exception as error:
+            self._append_check(
+                payload=payload,
+                name="api_connectivity",
+                ok=False,
+                message=f"api connectivity failed: {error}",
+            )
+            return _finalize_api_order_precheck_payload(payload)
+        self._append_check(
+            payload=payload,
+            name="api_connectivity",
+            ok=True,
+            message="ok",
+        )
+
+        try:
+            resources.position_repository.get_position(
+                symbol=symbol,
+                force_refresh=True,
+            )
+        except Exception as error:
+            self._append_check(
+                payload=payload,
+                name="position_fetch",
+                ok=False,
+                message=f"position fetch failed: {error}",
+            )
+            return _finalize_api_order_precheck_payload(payload)
+        self._append_check(
+            payload=payload,
+            name="position_fetch",
+            ok=True,
+            message="ok",
+        )
+
+        try:
+            resources.order_status_repository.list_orders(
+                symbol=symbol,
+                force_refresh=True,
+            )
+        except Exception as error:
+            self._append_check(
+                payload=payload,
+                name="order_status_fetch",
+                ok=False,
+                message=f"order status fetch failed: {error}",
+            )
+            return _finalize_api_order_precheck_payload(payload)
+        self._append_check(
+            payload=payload,
+            name="order_status_fetch",
+            ok=True,
+            message="ok",
+        )
+
+        preflight_ok, preflight_message = self._run_api_order_precheck_validation(
+            symbol=symbol,
+            resources=resources,
+        )
+        self._append_check(
+            payload=payload,
+            name="preflight_check",
+            ok=preflight_ok,
+            message=preflight_message,
+        )
+        payload["ok"] = all(check["ok"] for check in payload["checks"])
+        if payload["ok"]:
+            payload["message"] = "ok"
+            payload["errors"] = []
+        return _finalize_api_order_precheck_payload(payload)
+
+    def _run_api_order_precheck_validation(
+        self,
+        symbol: str,
+        resources: ApiOrderDryRunResources,
+    ) -> tuple[bool, str]:
+        """api-order-precheck 用の読み取り専用妥当性確認を実行する。
+
+        Args:
+            symbol: 確認対象銘柄コード。
+            resources: API 接続用リソース。
+
+        Returns:
+            tuple[bool, str]: 成否と結果メッセージ。
+        """
+
+        try:
+            if not self._open_orders_match_repository(
+                order_status_repository=resources.order_status_repository,
+                symbols=(symbol,),
+            ):
+                return False, "open orders are not synchronized with api"
+            resources.position_reconciliation_service.reconcile(
+                symbol=symbol,
+                internal_position=self.trading_process.get_state(symbol).position,
+            )
+        except Exception as error:
+            return False, f"preflight check failed: {error}"
+        return True, "ok"
 
     def run_api_order_dry_run(
         self,
@@ -1460,6 +1636,7 @@ def _run_operational_command(
         "halt",
         "resume",
         "preflight-check",
+        "api-order-precheck",
         "api-order-dry-run",
     }:
         raise ValueError(f"unsupported command: {command}")
@@ -1522,6 +1699,17 @@ def _run_operational_command(
                     arguments
                 ),
             )
+        elif command == "api-order-precheck":
+            payload = _api_order_precheck_error_payload(
+                config=config,
+                message=f"runtime initialization failed: {error}",
+                halt_state=snapshot_store.load_halt_state(),
+                symbol=_parse_option(arguments, "--symbol") or "",
+                side=(_parse_option(arguments, "--side") or "BUY").upper(),
+                quantity=_parse_api_order_dry_run_quantity_for_error_payload(
+                    arguments
+                ),
+            )
         else:
             payload = _error_payload(
                 message=f"runtime initialization failed: {error}",
@@ -1537,6 +1725,34 @@ def _run_operational_command(
         _write_cli_output(payload, json_output=json_output)
         return 1
     runtime.restore_snapshot_state()
+
+    if command == "api-order-precheck":
+        try:
+            payload = runtime.run_api_order_precheck(
+                symbol=_parse_required_option(arguments, "--symbol"),
+                side=OrderSide((_parse_option(arguments, "--side") or "BUY").upper()),
+                quantity=_parse_required_int_option(arguments, "--quantity"),
+            )
+        except Exception as error:
+            payload = _api_order_precheck_error_payload(
+                config=config,
+                message=str(error),
+                halt_state=runtime.get_trading_halt_state(),
+                symbol=_parse_option(arguments, "--symbol") or "",
+                side=(_parse_option(arguments, "--side") or "BUY").upper(),
+                quantity=_parse_api_order_dry_run_quantity_for_error_payload(
+                    arguments
+                ),
+            )
+        _log_operational_command(
+            logger=logger,
+            command=command,
+            result="ok" if payload["ok"] else "ng",
+            reason=payload["reason"],
+            message=payload["message"],
+        )
+        _write_cli_output(payload, json_output=json_output)
+        return 0 if payload["ok"] else 1
 
     if command == "api-order-dry-run":
         try:
@@ -1756,6 +1972,80 @@ def _api_order_dry_run_error_payload(
     return _finalize_api_order_dry_run_payload(payload)
 
 
+def _api_order_precheck_payload(
+    config: SystemConfig,
+    symbol: str,
+    side: str,
+    quantity: int,
+    halt_state: TradingHaltState | None = None,
+) -> dict[str, Any]:
+    """api-order-precheck の初期 payload を生成する。
+
+    Args:
+        config: システム設定。
+        symbol: 対象銘柄コード。
+        side: 想定売買方向。
+        quantity: 想定数量。
+        halt_state: 現在の停止状態。
+
+    Returns:
+        dict[str, Any]: 事前確認結果用 payload。
+    """
+
+    return {
+        "ok": False,
+        "command": "api-order-precheck",
+        "trading_mode": config.app.trading_mode.value,
+        "kabu_api_environment": config.app.kabu_api.environment.value,
+        "base_url": config.app.kabu_api.base_url,
+        "symbol": symbol,
+        "side": side,
+        "quantity": quantity,
+        "is_halted": halt_state.is_halted if halt_state is not None else False,
+        "reason": (
+            halt_state.reason.value if halt_state is not None and halt_state.reason else ""
+        ),
+        "message": "",
+        "checks": [],
+        "errors": [],
+        "next_action": [],
+    }
+
+
+def _api_order_precheck_error_payload(
+    config: SystemConfig,
+    message: str,
+    halt_state: TradingHaltState | None = None,
+    symbol: str = "",
+    side: str = "BUY",
+    quantity: int = 0,
+) -> dict[str, Any]:
+    """api-order-precheck の異常終了用 payload を生成する。
+
+    Args:
+        config: システム設定。
+        message: エラーメッセージ。
+        halt_state: 現在の停止状態。
+        symbol: 対象銘柄コード。
+        side: 想定売買方向。
+        quantity: 想定数量。
+
+    Returns:
+        dict[str, Any]: 整形済みのエラーペイロード。
+    """
+
+    payload = _api_order_precheck_payload(
+        config=config,
+        symbol=symbol,
+        side=side,
+        quantity=quantity,
+        halt_state=halt_state,
+    )
+    payload["message"] = message
+    payload["errors"] = [message]
+    return _finalize_api_order_precheck_payload(payload)
+
+
 def _finalize_api_order_dry_run_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """api-order-dry-run の表示用項目を補完する。"""
 
@@ -1766,6 +2056,27 @@ def _finalize_api_order_dry_run_payload(payload: dict[str, Any]) -> dict[str, An
     payload["reconciliation_result"] = _resolve_reconciliation_result(payload)
     payload["next_action"] = _resolve_api_order_dry_run_next_action(payload)
     payload["log_hint"] = _resolve_api_order_dry_run_log_hint(payload)
+    return payload
+
+
+def _finalize_api_order_precheck_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """api-order-precheck の表示用項目を補完する。
+
+    Args:
+        payload: 補完対象の payload。
+
+    Returns:
+        dict[str, Any]: 補完後の payload。
+    """
+
+    payload["ok"] = all(check["ok"] for check in payload.get("checks", [])) and not payload.get(
+        "errors"
+    )
+    payload["next_action"] = _resolve_api_order_precheck_next_action(payload)
+    if payload["ok"]:
+        payload["message"] = "ok"
+    elif not payload.get("message") and payload.get("errors"):
+        payload["message"] = payload["errors"][0]
     return payload
 
 
@@ -1846,14 +2157,94 @@ def _resolve_api_order_dry_run_log_hint(payload: dict[str, Any]) -> list[str]:
     return hints
 
 
+def _resolve_api_order_precheck_next_action(payload: dict[str, Any]) -> list[str]:
+    """api-order-precheck の次アクションを返す。
+
+    Args:
+        payload: 事前確認結果 payload。
+
+    Returns:
+        list[str]: 次に取るべき行動。
+    """
+
+    if payload.get("ok"):
+        return ["api-order-dry-run を実行できます"]
+
+    actions: list[str] = []
+    failed_checks = {
+        check["name"] for check in payload.get("checks", []) if not check.get("ok")
+    }
+    if "environment_is_paper" in failed_checks:
+        actions.append("config/app.yaml の kabu_api_environment を paper にしてください")
+    if "base_url_is_paper_port" in failed_checks:
+        actions.append("base_url が検証PORT 18081 を向いているか確認してください")
+    if "symbol_allowed" in failed_checks:
+        actions.append("config/app.yaml の trade_symbols を確認してください")
+    if "quantity_valid" in failed_checks:
+        actions.append("数量が 1以上 max_order_quantity 以下か確認してください")
+    if "not_halted" in failed_checks:
+        actions.append(
+            "halt-status で停止理由を確認し、必要なら原因調査後に resume してください"
+        )
+    if failed_checks.intersection(
+        {"api_connectivity", "position_fetch", "order_status_fetch", "preflight_check"}
+    ):
+        actions.append("kabuステーションを検証モードで起動し、API接続を確認してください")
+    if not actions:
+        actions.append("checks と errors を確認してください")
+    return actions
+
+
+def _is_paper_api_base_url(base_url: str) -> bool:
+    """検証 API 用 base_url かを判定する。
+
+    Args:
+        base_url: 判定対象 URL。
+
+    Returns:
+        bool: 18081 ポートを指していれば True。
+    """
+
+    parsed = urlparse(base_url)
+    if parsed.port is not None:
+        return parsed.port == 18081
+    return ":18081" in base_url
+
+
 def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
     """CLI 出力を標準出力へ書き出す。"""
 
     if payload.get("command") == "api-order-dry-run":
         _finalize_api_order_dry_run_payload(payload)
+    if payload.get("command") == "api-order-precheck":
+        _finalize_api_order_precheck_payload(payload)
     if json_output:
         sys.stdout.write(json.dumps(payload, ensure_ascii=False))
         sys.stdout.write("\n")
+        return
+    if payload.get("command") == "api-order-precheck":
+        sys.stdout.write(f"command: {payload['command']}\n")
+        sys.stdout.write(f"ok: {payload['ok']}\n")
+        sys.stdout.write(f"trading_mode: {payload['trading_mode']}\n")
+        sys.stdout.write(f"kabu_api_environment: {payload['kabu_api_environment']}\n")
+        sys.stdout.write(f"base_url: {payload['base_url']}\n")
+        sys.stdout.write(f"symbol: {payload['symbol']}\n")
+        sys.stdout.write(f"side: {payload['side']}\n")
+        sys.stdout.write(f"quantity: {payload['quantity']}\n")
+        if payload.get("checks"):
+            sys.stdout.write("checks:\n")
+            for check in payload["checks"]:
+                sys.stdout.write(
+                    f"  - {check['name']}: {'OK' if check['ok'] else 'NG'} {check['message']}\n"
+                )
+        if payload.get("errors"):
+            sys.stdout.write("errors:\n")
+            for error in payload["errors"]:
+                sys.stdout.write(f"  - {error}\n")
+        if payload.get("next_action"):
+            sys.stdout.write("next_action:\n")
+            for action in payload["next_action"]:
+                sys.stdout.write(f"  - {action}\n")
         return
     if payload.get("command") == "api-order-dry-run":
         sys.stdout.write(f"command: {payload['command']}\n")

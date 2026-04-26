@@ -503,6 +503,95 @@ def test_main_api_order_dry_run_outputs_json(monkeypatch) -> None:
     assert '"command=api-order-dry-run で検索してください"' in output.getvalue()
 
 
+def test_main_api_order_precheck_outputs_json(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    fake_runtime = _FakeRuntime(
+        halt_state=TradingHaltState(),
+        api_order_precheck_result={
+            "ok": True,
+            "command": "api-order-precheck",
+            "trading_mode": config.app.trading_mode.value,
+            "kabu_api_environment": config.app.kabu_api.environment.value,
+            "base_url": config.app.kabu_api.base_url,
+            "symbol": "1321",
+            "side": "BUY",
+            "quantity": 1,
+            "is_halted": False,
+            "reason": "",
+            "message": "ok",
+            "checks": [{"name": "environment_is_paper", "ok": True, "message": "ok"}],
+            "errors": [],
+            "next_action": ["api-order-dry-run を実行できます"],
+        },
+    )
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: fake_runtime,
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        ["api-order-precheck", "--symbol", "1321", "--quantity", "1", "--json"]
+    )
+
+    assert exit_code == 0
+    assert fake_runtime.api_order_precheck_calls == [("1321", "BUY", 1)]
+    assert '"command": "api-order-precheck"' in output.getvalue()
+    assert '"next_action": ["api-order-dry-run を実行できます"]' in output.getvalue()
+
+
+def test_main_api_order_precheck_outputs_next_action_on_failure(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    fake_runtime = _FakeRuntime(
+        halt_state=TradingHaltState(),
+        api_order_precheck_result={
+            "ok": False,
+            "command": "api-order-precheck",
+            "trading_mode": config.app.trading_mode.value,
+            "kabu_api_environment": "live",
+            "base_url": "http://localhost:18080",
+            "symbol": "1321",
+            "side": "BUY",
+            "quantity": 1,
+            "is_halted": False,
+            "reason": "",
+            "message": "kabu_api_environment must be paper",
+            "checks": [
+                {
+                    "name": "environment_is_paper",
+                    "ok": False,
+                    "message": "kabu_api_environment must be paper",
+                }
+            ],
+            "errors": ["kabu_api_environment must be paper"],
+            "next_action": [
+                "config/app.yaml の kabu_api_environment を paper にしてください"
+            ],
+        },
+    )
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: fake_runtime,
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["api-order-precheck", "--symbol", "1321", "--quantity", "1"])
+
+    assert exit_code == 1
+    assert "next_action:" in output.getvalue()
+    assert "config/app.yaml の kabu_api_environment を paper にしてください" in output.getvalue()
+
+
 def test_main_api_order_dry_run_returns_exit_code_one_on_api_error(monkeypatch) -> None:
     config = load_config(Path("config"))
     fake_logger = FakeLogger()
@@ -712,12 +801,21 @@ def test_operation_guide_mentions_api_order_dry_run_follow_up_steps() -> None:
     assert "log_hint" in guide
 
 
+def test_operation_guide_mentions_api_order_precheck() -> None:
+    guide = Path("docs/operation_guide.md").read_text(encoding="utf-8")
+
+    assert "api-order-precheck" in guide
+    assert "api-order-dry-run 実行前" in guide
+    assert "注文は送信しません" in guide
+
+
 class _FakeRuntime:
     def __init__(
         self,
         halt_state: TradingHaltState,
         resume_result: bool = False,
         preflight_result: dict | None = None,
+        api_order_precheck_result: dict | None = None,
         api_order_dry_run_result: dict | None = None,
     ) -> None:
         self.halt_state = halt_state
@@ -729,6 +827,22 @@ class _FakeRuntime:
             "message": halt_state.message,
             "checks": [],
             "errors": [],
+        }
+        self.api_order_precheck_result = api_order_precheck_result or {
+            "ok": True,
+            "command": "api-order-precheck",
+            "trading_mode": "live",
+            "kabu_api_environment": "paper",
+            "base_url": "http://localhost:18081",
+            "symbol": "1321",
+            "side": "BUY",
+            "quantity": 1,
+            "is_halted": halt_state.is_halted,
+            "reason": halt_state.reason.value if halt_state.reason is not None else "",
+            "message": "ok",
+            "checks": [],
+            "errors": [],
+            "next_action": ["api-order-dry-run を実行できます"],
         }
         self.api_order_dry_run_result = api_order_dry_run_result or {
             "ok": True,
@@ -758,6 +872,7 @@ class _FakeRuntime:
         self.resume_calls = 0
         self.save_snapshot_calls = 0
         self.restore_calls = 0
+        self.api_order_precheck_calls: list[tuple[str, str, int]] = []
         self.api_order_dry_run_calls: list[tuple[str, str, int, float | None]] = []
 
     def restore_snapshot_state(self) -> bool:
@@ -801,6 +916,10 @@ class _FakeRuntime:
     ) -> dict:
         self.api_order_dry_run_calls.append((symbol, side.value, quantity, price))
         return self.api_order_dry_run_result
+
+    def run_api_order_precheck(self, symbol: str, side, quantity: int) -> dict:
+        self.api_order_precheck_calls.append((symbol, side.value, quantity))
+        return self.api_order_precheck_result
 
 
 def _timestamp() -> datetime:
