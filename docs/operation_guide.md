@@ -209,3 +209,31 @@ python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1
 python main.py api-order-dry-run --symbol 1570 --side BUY --quantity 1 --json
 python main.py api-order-dry-run --symbol 1306 --side BUY --quantity 10
 ```
+
+### 実行後の確認手順
+
+#### 正常時の確認手順
+
+1. `api-order-dry-run` の標準出力で `ok=true` を確認する
+2. `order_id` が出ていることを確認する
+3. `order_status` を確認する
+4. `filled_quantity` / `remaining_quantity` を確認する
+5. `reconciliation_result` が `OK` であることを確認する
+6. `halt-status` を実行して停止状態でないことを確認する
+7. 必要に応じて `preflight-check` を実行する
+
+#### 異常時の確認手順
+
+1. `ok=false` を確認する
+2. `errors` を確認する
+3. `log_hint` に従ってログを見る
+4. `halt-status` で取引停止状態を確認する
+5. 原因調査後、必要なら `resume` を実行する
+
+### 再実行時の注意
+
+- 未完了注文が残っている場合、同一銘柄で再実行しない
+- 取引停止中は再実行しない
+- `1306` は数量 `10`、`1321` / `1570` は数量 `1` を基本にする
+- 本番 API 18080 では `api-order-dry-run` は実行できない
+- kabuステーションを検証モードで起動してから実行する

@@ -867,6 +867,7 @@ def test_runtime_api_order_dry_run_calls_order_sync_and_reconciliation_on_succes
     assert resources.gateway.place_order_calls == 1
     assert resources.order_status_repository.get_order_status_calls == 1
     assert resources.position_reconciliation_service.call_count >= 2
+    assert "時間を置いて注文状態同期を確認してください" in payload["next_action"]
 
 
 def test_runtime_api_order_dry_run_does_not_add_order_before_api_send(
@@ -925,6 +926,23 @@ def test_runtime_api_order_dry_run_returns_error_when_gateway_raises(monkeypatch
 
     assert payload["ok"] is False
     assert payload["errors"] == ["api failed"]
+    assert "kabuステーションが検証モードで起動しているか確認してください" in payload["next_action"]
+
+
+def test_runtime_api_order_dry_run_returns_reconciliation_failure_next_action(
+    monkeypatch,
+) -> None:
+    runtime = _build_api_order_dry_run_runtime(
+        monkeypatch,
+        snapshot_name="api_order_dry_run_reconcile_ng",
+        resource_options={"post_order_reconciliation_error": RuntimeError("position reconciliation failed")},
+    )
+
+    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+
+    assert payload["ok"] is False
+    assert payload["reconciliation_result"] == "NG"
+    assert "取引停止状態を確認してください" in payload["next_action"]
 
 
 class _FakeExternalDataProcess:
@@ -1068,6 +1086,7 @@ class _FakeApiOrderDryRunResources:
         gateway_error: Exception | None = None,
         use_real_validator: bool = False,
         open_orders_exist: bool = False,
+        post_order_reconciliation_error: Exception | None = None,
     ) -> None:
         self.order_status_repository = _FakeDryRunOrderStatusRepository(
             preflight_error=preflight_error,
@@ -1077,6 +1096,7 @@ class _FakeApiOrderDryRunResources:
         self.position_reconciliation_service = _FakeDryRunPositionReconciliationService(
             position_repository=self.position_repository,
             preflight_error=preflight_error,
+            post_order_error=post_order_reconciliation_error,
         )
         if use_real_validator:
             self.order_safety_validator = app_main.OrderSafetyValidator(
@@ -1182,15 +1202,19 @@ class _FakeDryRunPositionReconciliationService:
         self,
         position_repository: _FakeDryRunPositionRepository,
         preflight_error: Exception | None = None,
+        post_order_error: Exception | None = None,
     ) -> None:
         self.position_repository = position_repository
         self.preflight_error = preflight_error
+        self.post_order_error = post_order_error
         self.call_count = 0
 
     def reconcile(self, symbol: str, internal_position) -> None:
         self.call_count += 1
         if self.preflight_error is not None:
             raise self.preflight_error
+        if self.call_count > 1 and self.post_order_error is not None:
+            raise self.post_order_error
         self.position_repository.get_position(symbol, force_refresh=True)
 
 

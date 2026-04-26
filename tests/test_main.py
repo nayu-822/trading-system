@@ -456,10 +456,16 @@ def test_main_api_order_dry_run_outputs_json(monkeypatch) -> None:
             "filled_quantity": 0,
             "remaining_quantity": 1,
             "position_quantity": 0,
+            "position_side": "NONE",
+            "reconciliation_result": "OK",
             "position": {"symbol": "1321", "quantity": 0, "average_price": 0.0},
             "trading_mode": config.app.trading_mode.value,
             "kabu_api_environment": config.app.kabu_api.environment.value,
             "base_url": config.app.kabu_api.base_url,
+            "is_halted": False,
+            "halt_reason": "",
+            "next_action": ["時間を置いて注文状態同期を確認してください"],
+            "log_hint": ["command=api-order-dry-run で検索してください"],
             "checks": [],
             "errors": [],
         },
@@ -491,6 +497,10 @@ def test_main_api_order_dry_run_outputs_json(monkeypatch) -> None:
     assert fake_runtime.api_order_dry_run_calls == [("1321", "BUY", 1, None)]
     assert '"command": "api-order-dry-run"' in output.getvalue()
     assert '"order_id": "api-order-1"' in output.getvalue()
+    assert '"next_action": [' in output.getvalue()
+    assert '"時間を置いて注文状態同期を確認してください"' in output.getvalue()
+    assert '"log_hint": [' in output.getvalue()
+    assert '"command=api-order-dry-run で検索してください"' in output.getvalue()
 
 
 def test_main_api_order_dry_run_returns_exit_code_one_on_api_error(monkeypatch) -> None:
@@ -509,10 +519,16 @@ def test_main_api_order_dry_run_returns_exit_code_one_on_api_error(monkeypatch) 
             "filled_quantity": 0,
             "remaining_quantity": 1,
             "position_quantity": 0,
+            "position_side": "NONE",
+            "reconciliation_result": "UNKNOWN",
             "position": {"symbol": "1570", "quantity": 0, "average_price": 0.0},
             "trading_mode": config.app.trading_mode.value,
             "kabu_api_environment": config.app.kabu_api.environment.value,
             "base_url": config.app.kabu_api.base_url,
+            "is_halted": False,
+            "halt_reason": "",
+            "next_action": ["kabuステーションが検証モードで起動しているか確認してください"],
+            "log_hint": ["command=api-order-dry-run で検索してください"],
             "checks": [],
             "errors": ["api failed"],
         },
@@ -541,6 +557,65 @@ def test_main_api_order_dry_run_returns_exit_code_one_on_api_error(monkeypatch) 
 
     assert exit_code == 1
     assert "api failed" in output.getvalue()
+    assert "next_action:" in output.getvalue()
+    assert "kabuステーションが検証モードで起動しているか確認してください" in output.getvalue()
+
+
+def test_main_api_order_dry_run_success_output_includes_next_action(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    fake_runtime = _FakeRuntime(
+        halt_state=TradingHaltState(),
+        api_order_dry_run_result={
+            "ok": True,
+            "command": "api-order-dry-run",
+            "symbol": "1306",
+            "side": "BUY",
+            "quantity": 10,
+            "order_id": "api-order-2",
+            "order_status": "REQUESTED",
+            "filled_quantity": 0,
+            "remaining_quantity": 10,
+            "position_quantity": 0,
+            "position_side": "NONE",
+            "reconciliation_result": "OK",
+            "position": {"symbol": "1306", "quantity": 0, "average_price": 0.0},
+            "trading_mode": config.app.trading_mode.value,
+            "kabu_api_environment": config.app.kabu_api.environment.value,
+            "base_url": config.app.kabu_api.base_url,
+            "is_halted": False,
+            "halt_reason": "",
+            "next_action": ["時間を置いて注文状態同期を確認してください"],
+            "log_hint": ["command=api-order-dry-run で検索してください"],
+            "checks": [],
+            "errors": [],
+        },
+    )
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: fake_runtime,
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        ["api-order-dry-run", "--symbol", "1306", "--side", "BUY", "--quantity", "10"]
+    )
+
+    assert exit_code == 0
+    assert "next_action:" in output.getvalue()
+    assert "時間を置いて注文状態同期を確認してください" in output.getvalue()
+
+
+def test_operation_guide_mentions_api_order_dry_run_follow_up_steps() -> None:
+    guide = Path("docs/operation_guide.md").read_text(encoding="utf-8")
+
+    assert "正常時の確認手順" in guide
+    assert "異常時の確認手順" in guide
+    assert "log_hint" in guide
 
 
 class _FakeRuntime:
@@ -572,10 +647,16 @@ class _FakeRuntime:
             "filled_quantity": 0,
             "remaining_quantity": 1,
             "position_quantity": 0,
+            "position_side": "NONE",
+            "reconciliation_result": "OK",
             "position": {"symbol": "7203", "quantity": 0, "average_price": 0.0},
             "trading_mode": "paper",
             "kabu_api_environment": "paper",
             "base_url": "http://localhost:18081/kabusapi",
+            "is_halted": False,
+            "halt_reason": "",
+            "next_action": ["時間を置いて注文状態同期を確認してください"],
+            "log_hint": ["command=api-order-dry-run で検索してください"],
             "checks": [],
             "errors": [],
         }

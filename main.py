@@ -918,6 +918,8 @@ class ApplicationRuntime:
             "filled_quantity": 0,
             "remaining_quantity": quantity,
             "position_quantity": 0,
+            "position_side": "NONE",
+            "reconciliation_result": "UNKNOWN",
             "position": {
                 "symbol": symbol,
                 "quantity": 0,
@@ -928,7 +930,10 @@ class ApplicationRuntime:
             "base_url": self.config.app.kabu_api.base_url,
             "is_halted": False,
             "reason": "",
+            "halt_reason": "",
             "message": "",
+            "next_action": [],
+            "log_hint": [],
             "checks": [],
             "errors": [],
         }
@@ -950,6 +955,7 @@ class ApplicationRuntime:
     def _finalize_api_order_dry_run_log(self, payload: dict[str, Any]) -> None:
         """api-order-dry-run の結果をログ出力する。"""
 
+        _finalize_api_order_dry_run_payload(payload)
         self.logger.info(
             "operational command command=api-order-dry-run symbol=%s side=%s quantity=%s order_id=%s order_status=%s result=%s error_reason=%s",
             payload["symbol"],
@@ -1505,10 +1511,20 @@ def _run_operational_command(
             allow_real_order_disabled=True,
         )
     except Exception as error:
-        payload = _error_payload(
-            message=f"runtime initialization failed: {error}",
-            halt_state=snapshot_store.load_halt_state(),
-        )
+        if command == "api-order-dry-run":
+            payload = _api_order_dry_run_error_payload(
+                config=config,
+                message=f"runtime initialization failed: {error}",
+                halt_state=snapshot_store.load_halt_state(),
+                symbol=_parse_option(arguments, "--symbol") or "",
+                side=(_parse_option(arguments, "--side") or "").upper(),
+                quantity=int(_parse_option(arguments, "--quantity") or 0),
+            )
+        else:
+            payload = _error_payload(
+                message=f"runtime initialization failed: {error}",
+                halt_state=snapshot_store.load_halt_state(),
+            )
         _log_operational_command(
             logger=logger,
             command=command,
@@ -1529,9 +1545,13 @@ def _run_operational_command(
                 price=_parse_optional_float_option(arguments, "--price"),
             )
         except Exception as error:
-            payload = _error_payload(
+            payload = _api_order_dry_run_error_payload(
+                config=config,
                 message=str(error),
                 halt_state=runtime.get_trading_halt_state(),
+                symbol=_parse_option(arguments, "--symbol") or "",
+                side=(_parse_option(arguments, "--side") or "").upper(),
+                quantity=int(_parse_option(arguments, "--quantity") or 0),
             )
         _write_cli_output(payload, json_output=json_output)
         return 0 if payload["ok"] else 1
@@ -1652,15 +1672,158 @@ def _error_payload(
     return payload
 
 
+def _api_order_dry_run_error_payload(
+    config: SystemConfig,
+    message: str,
+    halt_state: TradingHaltState | None = None,
+    symbol: str = "",
+    side: str = "",
+    quantity: int = 0,
+) -> dict[str, Any]:
+    """api-order-dry-run の異常終了用 payload を生成する。"""
+
+    payload = {
+        "ok": False,
+        "command": "api-order-dry-run",
+        "symbol": symbol,
+        "side": side,
+        "quantity": quantity,
+        "order_id": "",
+        "order_status": "",
+        "filled_quantity": 0,
+        "remaining_quantity": quantity,
+        "position_quantity": 0,
+        "position_side": "NONE",
+        "reconciliation_result": "UNKNOWN",
+        "position": {
+            "symbol": symbol,
+            "quantity": 0,
+            "average_price": 0.0,
+        },
+        "trading_mode": config.app.trading_mode.value,
+        "kabu_api_environment": config.app.kabu_api.environment.value,
+        "base_url": config.app.kabu_api.base_url,
+        "is_halted": halt_state.is_halted if halt_state is not None else False,
+        "reason": (
+            halt_state.reason.value if halt_state is not None and halt_state.reason else ""
+        ),
+        "halt_reason": (
+            halt_state.reason.value if halt_state is not None and halt_state.reason else ""
+        ),
+        "message": message,
+        "next_action": [],
+        "log_hint": [],
+        "checks": [],
+        "errors": [message],
+    }
+    return _finalize_api_order_dry_run_payload(payload)
+
+
+def _finalize_api_order_dry_run_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """api-order-dry-run の表示用項目を補完する。"""
+
+    payload["halt_reason"] = payload.get("halt_reason") or payload.get("reason", "")
+    payload["position_side"] = _resolve_position_side_label(
+        int(payload.get("position_quantity", 0))
+    )
+    payload["reconciliation_result"] = _resolve_reconciliation_result(payload)
+    payload["next_action"] = _resolve_api_order_dry_run_next_action(payload)
+    payload["log_hint"] = _resolve_api_order_dry_run_log_hint(payload)
+    return payload
+
+
+def _resolve_position_side_label(position_quantity: int) -> str:
+    """建玉数量から売買方向表示を返す。"""
+
+    if position_quantity > 0:
+        return "BUY"
+    if position_quantity < 0:
+        return "SELL"
+    return "NONE"
+
+
+def _resolve_reconciliation_result(payload: dict[str, Any]) -> str:
+    """建玉突合結果を表示用に整形する。"""
+
+    target_checks = [
+        check
+        for check in payload.get("checks", [])
+        if check["name"] in {"position_reconciliation", "preflight_position_reconciliation"}
+    ]
+    if not target_checks:
+        return payload.get("reconciliation_result", "UNKNOWN")
+    return "OK" if all(check["ok"] for check in target_checks) else "NG"
+
+
+def _resolve_api_order_dry_run_next_action(payload: dict[str, Any]) -> list[str]:
+    """api-order-dry-run の次アクションを返す。"""
+
+    errors = [str(error) for error in payload.get("errors", [])]
+    error_text = " ".join(errors)
+    order_status = str(payload.get("order_status", "")).upper()
+    remaining_quantity = int(payload.get("remaining_quantity", 0))
+    reconciliation_result = str(payload.get("reconciliation_result", "UNKNOWN")).upper()
+
+    if payload.get("ok"):
+        if order_status in {"NEW", "REQUESTED", "PARTIALLY_FILLED"} or remaining_quantity > 0:
+            return [
+                "時間を置いて注文状態同期を確認してください",
+                "未完了注文が残っているため、同一銘柄の再実行は避けてください",
+            ]
+        return [
+            "preflight-check を実行して状態を再確認してください",
+            "halt-status で取引停止状態でないことを確認してください",
+        ]
+    if reconciliation_result == "NG" or "position reconciliation failed" in error_text:
+        return [
+            "取引停止状態を確認してください",
+            "API建玉と内部建玉を確認し、原因調査後に resume を実行してください",
+        ]
+    if "kabu" in error_text.lower() or "api" in error_text.lower():
+        return [
+            "kabuステーションが検証モードで起動しているか確認してください",
+            "kabu_api_environment が paper であることを確認してください",
+        ]
+    if payload.get("is_halted"):
+        return [
+            "halt-status で停止理由を確認してください",
+            "原因調査後、必要なら resume を実行してください",
+        ]
+    return [
+        "errors を確認し、log_hint に従ってログを調査してください",
+        "halt-status で取引停止状態を確認してください",
+    ]
+
+
+def _resolve_api_order_dry_run_log_hint(payload: dict[str, Any]) -> list[str]:
+    """api-order-dry-run のログ確認ヒントを返す。"""
+
+    hints = [
+        "アプリケーションログ出力を確認してください",
+        "command=api-order-dry-run で検索してください",
+    ]
+    if payload.get("order_id"):
+        hints.append(
+            f"order_id={payload['order_id']} で検索してください"
+        )
+    return hints
+
+
 def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
     """CLI 出力を標準出力へ書き出す。"""
 
+    if payload.get("command") == "api-order-dry-run":
+        _finalize_api_order_dry_run_payload(payload)
     if json_output:
         sys.stdout.write(json.dumps(payload, ensure_ascii=False))
         sys.stdout.write("\n")
         return
     if payload.get("command") == "api-order-dry-run":
+        sys.stdout.write(f"command: {payload['command']}\n")
         sys.stdout.write(f"ok: {payload['ok']}\n")
+        sys.stdout.write(f"trading_mode: {payload['trading_mode']}\n")
+        sys.stdout.write(f"kabu_api_environment: {payload['kabu_api_environment']}\n")
+        sys.stdout.write(f"base_url: {payload['base_url']}\n")
         sys.stdout.write(f"symbol: {payload['symbol']}\n")
         sys.stdout.write(f"side: {payload['side']}\n")
         sys.stdout.write(f"quantity: {payload['quantity']}\n")
@@ -1669,11 +1832,12 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
         sys.stdout.write(f"filled_quantity: {payload['filled_quantity']}\n")
         sys.stdout.write(f"remaining_quantity: {payload['remaining_quantity']}\n")
         sys.stdout.write(f"position_quantity: {payload['position_quantity']}\n")
-        sys.stdout.write(f"trading_mode: {payload['trading_mode']}\n")
+        sys.stdout.write(f"position_side: {payload['position_side']}\n")
         sys.stdout.write(
-            f"kabu_api_environment: {payload['kabu_api_environment']}\n"
+            f"reconciliation_result: {payload['reconciliation_result']}\n"
         )
-        sys.stdout.write(f"base_url: {payload['base_url']}\n")
+        sys.stdout.write(f"is_halted: {payload['is_halted']}\n")
+        sys.stdout.write(f"halt_reason: {payload['halt_reason']}\n")
         if payload.get("checks"):
             sys.stdout.write("checks:\n")
             for check in payload["checks"]:
@@ -1684,6 +1848,14 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
             sys.stdout.write("errors:\n")
             for error in payload["errors"]:
                 sys.stdout.write(f"  - {error}\n")
+        if payload.get("next_action"):
+            sys.stdout.write("next_action:\n")
+            for action in payload["next_action"]:
+                sys.stdout.write(f"  - {action}\n")
+        if payload.get("log_hint"):
+            sys.stdout.write("log_hint:\n")
+            for hint in payload["log_hint"]:
+                sys.stdout.write(f"  - {hint}\n")
         return
     sys.stdout.write(f"ok: {payload['ok']}\n")
     sys.stdout.write(f"is_halted: {payload['is_halted']}\n")
