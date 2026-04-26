@@ -21,6 +21,9 @@ def validate_config(
     """構成項目と値の妥当性を検証する。
     Args:
         config: 検証対象のシステム設定。
+        allow_missing_api_password: True の場合、API モードでも API パスワード環境変数
+            未設定を許容する。api-order-precheck のような事前確認用途でのみ使い、
+            通常起動や api-order-dry-run では False のままにする。
     Returns:
         なし
     Raises:
@@ -43,6 +46,9 @@ def _validate_app_config(
     """app 設定の妥当性を検証する。
     Args:
         config: 検証対象のシステム設定。
+        allow_missing_api_password: True の場合、API モードでも API パスワード環境変数
+            未設定を許容する。api-order-precheck のような事前確認用途でのみ使い、
+            通常起動や api-order-dry-run では False のままにする。
     Returns:
         なし
     Raises:
