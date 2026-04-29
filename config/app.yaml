@@ -12,20 +12,20 @@ mode: mock
 #   paper: 内部的に実注文を送らない確認向けです。MockOrderGateway を使う想定です。
 #   live: LiveOrderGateway など実注文系処理を有効にします。
 # kabu API の接続先を表す kabu_api_environment とは別概念です。
-trading_mode: paper
+trading_mode: live
 
 # live 系処理を明示的に有効化する安全スイッチです。
 # 値ごとの考え方:
 #   false: live 系処理を禁止します。初回確認、CSV 検証、誤発注防止向けです。
 #   true: trading_mode=live のときに必要です。設定確認後にだけ有効化してください。
-live_enabled: false
+live_enabled: true
 
 # 市場データの取得元です。
 # 指定値:
 #   csv: ローカル CSV データを使う確認向けです。kabu ステーション起動は不要です。
 #   api: kabu ステーション API を使う確認・運用向けです。API 接続が必要です。
 # kabu API を利用する場合は api にします。
-data_source_mode: csv
+data_source_mode: api
 
 # ログレベルです。通常は INFO を推奨します。
 log_level: INFO
@@ -78,7 +78,7 @@ api_timeout_sec: 5
 #   KABU_API_PASSWORD_LIVE: 本番 API 用の環境変数名です。
 #   それ以外: 組織内の命名規則がある場合のみ使ってください。
 # YAML に API パスワードを直接書かないでください。
-token_env_name: KABU_API_PASSWORD
+token_env_name: KABU_API_PASSWORD_PAPER
 
 # kabu_api_environment から自動決定される base_url を上書きしたい場合のみ使います。
 # 通常は未指定のままで、paper=18081 / live=18080 の自動設定を利用してください。

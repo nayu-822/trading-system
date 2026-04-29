@@ -1779,8 +1779,12 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(CONFIG_DIR)
         logger = setup_logger(config.app.log_level, process_name=EventSource.MAIN.value)
         if arguments:
-            if arguments[0] in {"api-order-precheck", "config-summary", "paper-runbook"}:
+            if arguments[0] == "paper-runbook":
+                pass
+            elif arguments[0] in {"api-order-precheck", "config-summary"}:
                 validate_config(config, allow_missing_api_password=True)
+            else:
+                validate_config(config)
             return _run_operational_command(arguments, config=config, logger=logger)
         initialize_application(block_api=True)
     except KeyboardInterrupt:

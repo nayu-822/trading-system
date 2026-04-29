@@ -312,6 +312,99 @@ def test_main_paper_runbook_outputs_json(monkeypatch) -> None:
     assert '"1570": {' in output.getvalue()
 
 
+def test_main_paper_runbook_does_not_call_validate_config(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    validate_calls: list[tuple[bool, bool]] = []
+
+    def fake_validate_config(
+        config,
+        allow_missing_api_password: bool = False,
+    ) -> None:
+        validate_calls.append((True, allow_missing_api_password))
+
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(app_main, "validate_config", fake_validate_config)
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["paper-runbook"])
+
+    assert exit_code == 0
+    assert validate_calls == []
+
+
+def test_main_paper_runbook_succeeds_even_when_config_would_fail_validation(
+    monkeypatch,
+) -> None:
+    base_config = load_config(Path("config"))
+    invalid_config = replace(
+        base_config,
+        app=replace(
+            base_config.app,
+            data_source_mode=app_main.DataSourceMode.API,
+            trading_mode=app_main.TradingMode.LIVE,
+            live_enabled=False,
+            kabu_api=replace(
+                base_config.app.kabu_api,
+                token_env_name="KABU_API_PASSWORD_PAPER",
+            ),
+        ),
+    )
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
+    monkeypatch.setattr(app_main, "load_config", lambda _: invalid_config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "validate_config",
+        lambda config, allow_missing_api_password=False: (_ for _ in ()).throw(
+            app_main.ConfigValidationError("should not be called")
+        ),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: (_ for _ in ()).throw(
+            AssertionError("runtime should not be built")
+        ),
+    )
+    monkeypatch.setattr(
+        app_main.KabuApiClient,
+        "get_token",
+        lambda self: (_ for _ in ()).throw(AssertionError("token should not be fetched")),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["paper-runbook"])
+
+    assert exit_code == 0
+    assert "command: paper-runbook" in output.getvalue()
+
+
+def test_main_paper_runbook_outputs_json_without_validation(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "validate_config",
+        lambda config, allow_missing_api_password=False: (_ for _ in ()).throw(
+            app_main.ConfigValidationError("should not be called")
+        ),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["paper-runbook", "--json"])
+
+    assert exit_code == 0
+    assert '"command": "paper-runbook"' in output.getvalue()
+
+
 def test_main_halt_sets_manual_halt_and_saves_snapshot(monkeypatch) -> None:
     config = replace(
         load_config(Path("config")),
@@ -1057,8 +1150,8 @@ def test_main_api_order_dry_run_still_fails_when_api_password_is_missing(
     )
 
     assert exit_code == 1
-    assert "runtime initialization failed" in output.getvalue()
-    assert "KABU_API_PASSWORD_PAPER" in output.getvalue()
+    assert output.getvalue() == ""
+    assert fake_logger.messages == ["application initialization failed"]
 
 
 def test_main_still_fails_on_normal_start_when_api_password_is_missing(
