@@ -230,6 +230,89 @@ def test_main_config_summary_does_not_fetch_api_token(monkeypatch) -> None:
     assert '"command": "config-summary"' in output.getvalue()
 
 
+def test_main_uses_default_app_config_when_config_option_is_missing(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    loaded_paths: list[Path] = []
+    output = io.StringIO()
+
+    def fake_load_config(path: Path) -> object:
+        loaded_paths.append(Path(path))
+        return config
+
+    monkeypatch.setattr(app_main, "load_config", fake_load_config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(["paper-runbook"])
+
+    assert exit_code == 0
+    assert loaded_paths == [app_main.DEFAULT_APP_CONFIG_PATH]
+
+
+def test_main_uses_explicit_config_path_when_config_option_is_provided(
+    monkeypatch,
+) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    loaded_paths: list[Path] = []
+    output = io.StringIO()
+
+    def fake_load_config(path: Path) -> object:
+        loaded_paths.append(Path(path))
+        return config
+
+    monkeypatch.setattr(app_main, "load_config", fake_load_config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        ["--config", "config/app.api-paper.yaml", "config-summary", "--json"]
+    )
+
+    assert exit_code in {0, 1}
+    assert loaded_paths == [Path("config/app.api-paper.yaml")]
+
+
+def test_main_uses_explicit_config_path_when_config_option_is_after_command(
+    monkeypatch,
+) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    loaded_paths: list[Path] = []
+    output = io.StringIO()
+
+    def fake_load_config(path: Path) -> object:
+        loaded_paths.append(Path(path))
+        return config
+
+    monkeypatch.setattr(app_main, "load_config", fake_load_config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        ["config-summary", "--config", "config/app.api-paper.yaml", "--json"]
+    )
+
+    assert exit_code in {0, 1}
+    assert loaded_paths == [Path("config/app.api-paper.yaml")]
+
+
+def test_main_returns_readable_error_when_config_file_is_missing(monkeypatch) -> None:
+    fake_logger = FakeLogger()
+
+    def raise_config_load_error(path: Path) -> None:
+        raise ConfigLoadError(f"設定ファイルが見つかりません: {path}")
+
+    monkeypatch.setattr(app_main, "load_config", raise_config_load_error)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+
+    exit_code = app_main.main(["--config", "config/missing.yaml", "config-summary"])
+
+    assert exit_code == 1
+    assert fake_logger.messages == ["application initialization failed"]
+
+
 def test_main_config_summary_does_not_call_order_or_position_apis(monkeypatch) -> None:
     config = load_config(Path("config"))
     fake_logger = FakeLogger()
@@ -261,6 +344,23 @@ def test_main_config_summary_does_not_call_order_or_position_apis(monkeypatch) -
 
     assert exit_code in {0, 1}
     assert "command: config-summary" in output.getvalue()
+
+
+def test_main_config_summary_includes_config_path(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        ["--config", "config/app.api-paper.yaml", "config-summary", "--json"]
+    )
+
+    assert exit_code in {0, 1}
+    payload = json.loads(output.getvalue())
+    assert payload["config_path"] == "config/app.api-paper.yaml"
 
 
 def test_main_paper_runbook_outputs_text(monkeypatch) -> None:
@@ -400,6 +500,34 @@ def test_main_paper_runbook_outputs_json_without_validation(monkeypatch) -> None
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(["paper-runbook", "--json"])
+
+    assert exit_code == 0
+    assert '"command": "paper-runbook"' in output.getvalue()
+
+
+def test_main_paper_runbook_with_config_does_not_build_runtime(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: (_ for _ in ()).throw(
+            AssertionError("runtime should not be built")
+        ),
+    )
+    monkeypatch.setattr(
+        app_main.KabuApiClient,
+        "get_token",
+        lambda self: (_ for _ in ()).throw(AssertionError("token should not be fetched")),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        ["--config", "config/app.csv-paper.yaml", "paper-runbook", "--json"]
+    )
 
     assert exit_code == 0
     assert '"command": "paper-runbook"' in output.getvalue()
@@ -695,6 +823,8 @@ def test_main_api_order_dry_run_outputs_json(monkeypatch) -> None:
 
     exit_code = app_main.main(
         [
+            "--config",
+            "config/app.api-paper-dry-run.yaml",
             "api-order-dry-run",
             "--symbol",
             "1321",
@@ -1072,6 +1202,8 @@ def test_main_api_order_dry_run_with_invalid_quantity_outputs_json(
 
     exit_code = app_main.main(
         [
+            "--config",
+            "config/app.api-paper-dry-run.yaml",
             "api-order-dry-run",
             "--symbol",
             "1321",
@@ -1676,6 +1808,8 @@ def test_main_api_order_dry_run_save_result_creates_json_file(monkeypatch) -> No
 
     exit_code = app_main.main(
         [
+            "--config",
+            "config/app.api-paper-dry-run.yaml",
             "api-order-dry-run",
             "--symbol",
             "1321",
@@ -1697,6 +1831,7 @@ def test_main_api_order_dry_run_save_result_creates_json_file(monkeypatch) -> No
     saved_payload = json.loads(result_file.read_text(encoding="utf-8"))
     assert saved_payload["order_id"] == "api-order-1"
     assert saved_payload["order_status"] == "REQUESTED"
+    assert saved_payload["config_path"] == "config/app.api-paper-dry-run.yaml"
     assert saved_payload["config_summary"]["token_env_name"] == config.app.kabu_api.token_env_name
 
 
@@ -1728,6 +1863,79 @@ def test_main_api_order_precheck_does_not_save_without_option(monkeypatch) -> No
 
     assert exit_code == 0
     assert not result_dir.exists()
+
+
+def test_main_api_order_precheck_includes_config_path(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: _FakeRuntime(
+            halt_state=TradingHaltState()
+        ),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        [
+            "--config",
+            "config/app.api-paper.yaml",
+            "api-order-precheck",
+            "--symbol",
+            "1321",
+            "--quantity",
+            "1",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output.getvalue())
+    assert payload["config_path"] == "config/app.api-paper.yaml"
+    assert payload["config_summary"]["config_path"] == "config/app.api-paper.yaml"
+
+
+def test_main_api_order_dry_run_includes_config_path(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    fake_logger = FakeLogger()
+    output = io.StringIO()
+    monkeypatch.setattr(app_main, "load_config", lambda _: config)
+    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main,
+        "build_application_runtime",
+        lambda config, allow_real_order_disabled=False: _FakeRuntime(
+            halt_state=TradingHaltState()
+        ),
+    )
+    monkeypatch.setattr(app_main.sys, "stdout", output)
+
+    exit_code = app_main.main(
+        [
+            "--config",
+            "config/app.api-paper-dry-run.yaml",
+            "api-order-dry-run",
+            "--symbol",
+            "1321",
+            "--side",
+            "BUY",
+            "--quantity",
+            "1",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output.getvalue())
+    assert payload["config_path"] == "config/app.api-paper-dry-run.yaml"
+    assert (
+        payload["config_summary"]["config_path"]
+        == "config/app.api-paper-dry-run.yaml"
+    )
 
 
 def test_main_api_order_precheck_save_result_failure_returns_error(monkeypatch) -> None:
@@ -2052,6 +2260,20 @@ def test_paper_api_test_record_template_exists() -> None:
     template_path = Path("docs/paper_api_test_record_template.md")
 
     assert template_path.exists()
+
+
+def test_operation_guide_mentions_config_option() -> None:
+    guide = Path("docs/operation_guide.md").read_text(encoding="utf-8")
+
+    assert "--config" in guide
+    assert "config/app.api-paper-dry-run.yaml" in guide
+
+
+def test_readme_mentions_config_option_examples() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "--config" in readme
+    assert "config/app.api-paper-dry-run.yaml" in readme
 
 
 class _FakeRuntime:

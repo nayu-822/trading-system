@@ -63,6 +63,7 @@ from trading.position_reconciliation_service import (
 from trading.risk_manager import RiskManager
 
 CONFIG_DIR = Path("config")
+DEFAULT_APP_CONFIG_PATH = CONFIG_DIR / "app.yaml"
 DEFAULT_CSV_PATH = Path("data/market_data.csv")
 DEFAULT_LOG_LEVEL = "INFO"
 PAPER_API_RESULTS_DIR = Path("logs/paper_api_results")
@@ -1771,12 +1772,42 @@ def _resolve_api_order_precheck_safe_quantity_from_config(
     return _resolve_api_order_precheck_lot_unit_from_config(config=config, symbol=symbol)
 
 
+def _parse_cli_config_path(arguments: list[str]) -> tuple[Path, list[str]]:
+    """CLI 引数から設定ファイルパスを解決する。
+
+    Args:
+        arguments: メイン関数に渡された生の CLI 引数。
+
+    Returns:
+        tuple[Path, list[str]]: 解決した設定ファイルパスと、
+        `--config` を除去した残りの引数。
+
+    Raises:
+        ValueError: `--config` に値が指定されていない場合。
+    """
+
+    remaining_arguments: list[str] = []
+    config_path = DEFAULT_APP_CONFIG_PATH
+    index = 0
+    while index < len(arguments):
+        if arguments[index] == "--config":
+            if index + 1 >= len(arguments):
+                raise ValueError("--config requires a path")
+            config_path = Path(arguments[index + 1])
+            index += 2
+            continue
+        remaining_arguments.append(arguments[index])
+        index += 1
+    return config_path, remaining_arguments
+
+
 def main(argv: list[str] | None = None) -> int:
     """設定読込・検証・基盤初期化または運用コマンドを実行する。"""
 
     arguments = list(sys.argv[1:] if argv is None else argv)
+    config_path, arguments = _parse_cli_config_path(arguments)
     try:
-        config = load_config(CONFIG_DIR)
+        config = load_config(config_path)
         logger = setup_logger(config.app.log_level, process_name=EventSource.MAIN.value)
         if arguments:
             if arguments[0] == "paper-runbook":
@@ -1785,7 +1816,12 @@ def main(argv: list[str] | None = None) -> int:
                 validate_config(config, allow_missing_api_password=True)
             else:
                 validate_config(config)
-            return _run_operational_command(arguments, config=config, logger=logger)
+            return _run_operational_command(
+                arguments,
+                config=config,
+                logger=logger,
+                config_path=config_path,
+            )
         initialize_application(block_api=True)
     except KeyboardInterrupt:
         logger.info("application interrupted")
@@ -1805,6 +1841,7 @@ def _run_operational_command(
     arguments: list[str],
     config: SystemConfig,
     logger: logging.Logger,
+    config_path: Path,
 ) -> int:
     """運用コマンドを実行する。"""
 
@@ -1824,7 +1861,7 @@ def _run_operational_command(
     save_result = _result_save_requested(arguments)
 
     if command == "config-summary":
-        payload = _config_summary_payload(config)
+        payload = _config_summary_payload(config=config, config_path=config_path)
         _log_operational_command(
             logger=logger,
             command=command,
@@ -1897,6 +1934,7 @@ def _run_operational_command(
         if command == "api-order-precheck" and _is_api_password_env_missing(config):
             payload = _build_api_order_precheck_config_only_payload(
                 config=config,
+                config_path=config_path,
                 halt_state=snapshot_store.load_halt_state(),
                 symbol=_parse_option(arguments, "--symbol") or "",
                 side=(_parse_option(arguments, "--side") or "BUY").upper(),
@@ -1905,6 +1943,7 @@ def _run_operational_command(
         elif command == "api-order-dry-run":
             payload = _api_order_dry_run_error_payload(
                 config=config,
+                config_path=config_path,
                 message=f"runtime initialization failed: {error}",
                 halt_state=snapshot_store.load_halt_state(),
                 symbol=_parse_option(arguments, "--symbol") or "",
@@ -1916,6 +1955,7 @@ def _run_operational_command(
         elif command == "api-order-precheck":
             payload = _api_order_precheck_error_payload(
                 config=config,
+                config_path=config_path,
                 message=f"runtime initialization failed: {error}",
                 halt_state=snapshot_store.load_halt_state(),
                 symbol=_parse_option(arguments, "--symbol") or "",
@@ -1953,6 +1993,7 @@ def _run_operational_command(
         except Exception as error:
             payload = _api_order_precheck_error_payload(
                 config=config,
+                config_path=config_path,
                 message=str(error),
                 halt_state=runtime.get_trading_halt_state(),
                 symbol=_parse_option(arguments, "--symbol") or "",
@@ -1962,6 +2003,7 @@ def _run_operational_command(
                 ),
             )
         save_ok = True
+        _attach_command_record_context(payload, config, config_path=config_path)
         if save_result:
             save_ok = _save_paper_api_result_payload(payload)
         _log_operational_command(
@@ -1986,6 +2028,7 @@ def _run_operational_command(
         except Exception as error:
             payload = _api_order_dry_run_error_payload(
                 config=config,
+                config_path=config_path,
                 message=str(error),
                 halt_state=runtime.get_trading_halt_state(),
                 symbol=_parse_option(arguments, "--symbol") or "",
@@ -1995,6 +2038,7 @@ def _run_operational_command(
                 ),
             )
         save_ok = True
+        _attach_command_record_context(payload, config, config_path=config_path)
         if save_result:
             save_ok = _save_paper_api_result_payload(payload)
         _log_operational_command(
@@ -2177,6 +2221,7 @@ def _api_order_dry_run_error_payload(
     symbol: str = "",
     side: str = "",
     quantity: int = 0,
+    config_path: Path | None = None,
 ) -> dict[str, Any]:
     """api-order-dry-run の異常終了用 payload を生成する。"""
 
@@ -2215,7 +2260,11 @@ def _api_order_dry_run_error_payload(
         "errors": [message],
     }
     return _finalize_api_order_dry_run_payload(
-        _attach_command_record_context(payload, config=config)
+        _attach_command_record_context(
+            payload,
+            config=config,
+            config_path=config_path,
+        )
     )
 
 
@@ -2225,6 +2274,7 @@ def _api_order_precheck_payload(
     side: str,
     quantity: int,
     halt_state: TradingHaltState | None = None,
+    config_path: Path | None = None,
 ) -> dict[str, Any]:
     """api-order-precheck の初期 payload を生成する。
 
@@ -2248,6 +2298,7 @@ def _api_order_precheck_payload(
             halt_state=halt_state,
         ),
         config=config,
+        config_path=config_path,
     )
 
 
@@ -2258,6 +2309,7 @@ def _api_order_precheck_error_payload(
     symbol: str = "",
     side: str = "BUY",
     quantity: int = 0,
+    config_path: Path | None = None,
 ) -> dict[str, Any]:
     """api-order-precheck の異常終了用 payload を生成する。
 
@@ -2283,6 +2335,7 @@ def _api_order_precheck_error_payload(
             quantity=quantity,
         ),
         config=config,
+        config_path=config_path,
     )
 
 
@@ -2326,7 +2379,10 @@ def _prepare_operational_payload_for_output(payload: dict[str, Any]) -> dict[str
     return payload
 
 
-def _build_command_config_summary(config: SystemConfig) -> dict[str, Any]:
+def _build_command_config_summary(
+    config: SystemConfig,
+    config_path: Path = DEFAULT_APP_CONFIG_PATH,
+) -> dict[str, Any]:
     """記録用の設定要約を生成する。
 
     Args:
@@ -2337,6 +2393,7 @@ def _build_command_config_summary(config: SystemConfig) -> dict[str, Any]:
     """
 
     return {
+        "config_path": config_path.as_posix(),
         "trading_mode": config.app.trading_mode.value,
         "data_source_mode": config.app.data_source_mode.value,
         "kabu_api_environment": config.app.kabu_api.environment.value,
@@ -2349,6 +2406,7 @@ def _build_command_config_summary(config: SystemConfig) -> dict[str, Any]:
 def _attach_command_record_context(
     payload: dict[str, Any],
     config: SystemConfig,
+    config_path: Path | None = None,
 ) -> dict[str, Any]:
     """CLI 記録用メタ情報を payload に付与する。
 
@@ -2362,7 +2420,22 @@ def _attach_command_record_context(
 
     payload.setdefault("executed_at", datetime.now().astimezone().isoformat())
     payload.setdefault("git_commit", _resolve_git_commit())
-    payload.setdefault("config_summary", _build_command_config_summary(config))
+    resolved_config_path = config_path or DEFAULT_APP_CONFIG_PATH
+    if config_path is not None:
+        payload["config_path"] = resolved_config_path.as_posix()
+        payload["config_summary"] = _build_command_config_summary(
+            config,
+            config_path=resolved_config_path,
+        )
+    else:
+        payload.setdefault("config_path", resolved_config_path.as_posix())
+        payload.setdefault(
+            "config_summary",
+            _build_command_config_summary(
+                config,
+                config_path=resolved_config_path,
+            ),
+        )
     payload.setdefault(
         "record_hint",
         "docs/paper_api_test_record_template.md に結果を記録してください",
@@ -2572,6 +2645,7 @@ def _append_api_order_precheck_check(
 
 def _build_api_order_precheck_config_only_payload(
     config: SystemConfig,
+    config_path: Path,
     halt_state: TradingHaltState,
     symbol: str,
     side: str,
@@ -2592,6 +2666,7 @@ def _build_api_order_precheck_config_only_payload(
 
     payload = _api_order_precheck_payload(
         config=config,
+        config_path=config_path,
         symbol=symbol,
         side=side,
         quantity=quantity,
@@ -3008,7 +3083,10 @@ def _resolve_config_summary_next_action(
     return ["docs/operation_guide.md を確認して設定内容を見直してください"]
 
 
-def _config_summary_payload(config: SystemConfig) -> dict[str, Any]:
+def _config_summary_payload(
+    config: SystemConfig,
+    config_path: Path = DEFAULT_APP_CONFIG_PATH,
+) -> dict[str, Any]:
     """現在設定の解釈結果を config-summary 用 payload にまとめる。
 
     Args:
@@ -3027,6 +3105,7 @@ def _config_summary_payload(config: SystemConfig) -> dict[str, Any]:
     payload = {
         "command": "config-summary",
         "ok": len(warnings) == 0,
+        "config_path": config_path.as_posix(),
         "mode": config.app.mode.value,
         "trading_mode": config.app.trading_mode.value,
         "live_enabled": config.app.live_enabled,
@@ -3198,6 +3277,7 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
     if payload.get("command") == "config-summary":
         sys.stdout.write(f"command: {payload['command']}\n")
         sys.stdout.write(f"ok: {payload['ok']}\n")
+        sys.stdout.write(f"config_path: {payload['config_path']}\n")
         sys.stdout.write(f"mode: {payload['mode']}\n")
         sys.stdout.write(f"trading_mode: {payload['trading_mode']}\n")
         sys.stdout.write(f"live_enabled: {payload['live_enabled']}\n")
@@ -3236,6 +3316,7 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
     if payload.get("command") == "api-order-precheck":
         sys.stdout.write(f"command: {payload['command']}\n")
         sys.stdout.write(f"ok: {payload['ok']}\n")
+        sys.stdout.write(f"config_path: {payload.get('config_path', '')}\n")
         sys.stdout.write(f"executed_at: {payload.get('executed_at', '')}\n")
         sys.stdout.write(f"git_commit: {payload.get('git_commit', 'unknown')}\n")
         sys.stdout.write(f"trading_mode: {payload['trading_mode']}\n")
@@ -3273,6 +3354,7 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
     if payload.get("command") == "api-order-dry-run":
         sys.stdout.write(f"command: {payload['command']}\n")
         sys.stdout.write(f"ok: {payload['ok']}\n")
+        sys.stdout.write(f"config_path: {payload.get('config_path', '')}\n")
         sys.stdout.write(f"executed_at: {payload.get('executed_at', '')}\n")
         sys.stdout.write(f"git_commit: {payload.get('git_commit', 'unknown')}\n")
         sys.stdout.write(f"trading_mode: {payload['trading_mode']}\n")

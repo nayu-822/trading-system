@@ -20,7 +20,7 @@ class ConfigLoadError(Exception):
     """設定読込に失敗したことを表す例外。"""
 
 
-def load_config(config_dir: Path) -> SystemConfig:
+def load_config(config_path: Path | str = Path("config")) -> SystemConfig:
     """設定ディレクトリから全設定を読み込む。
 
     Args:
@@ -30,7 +30,9 @@ def load_config(config_dir: Path) -> SystemConfig:
         統合済み設定モデル。
     """
 
-    app_data = _load_yaml(config_dir / "app.yaml")
+    app_config_path, config_dir = _resolve_config_file_paths(Path(config_path))
+
+    app_data = _load_yaml(app_config_path)
     symbols_data = _load_yaml(config_dir / "symbols.yaml")
     strategy_data = _load_yaml(config_dir / "strategy.yaml")
     risk_data = _load_yaml(config_dir / "risk.yaml")
@@ -41,6 +43,26 @@ def load_config(config_dir: Path) -> SystemConfig:
         strategy=_build_strategy_config(strategy_data),
         risk=_build_risk_config(risk_data),
     )
+
+
+def _resolve_config_file_paths(config_path: Path) -> tuple[Path, Path]:
+    """app 設定ファイルと共通設定ディレクトリを解決する。
+
+    Args:
+        config_path: 呼び出し元から渡された設定パス。
+
+    Returns:
+        tuple[Path, Path]: app 設定ファイルパスと共通設定ディレクトリ。
+    """
+
+    if config_path.exists():
+        if config_path.is_dir():
+            return config_path / "app.yaml", config_path
+        return config_path, config_path.parent
+
+    if config_path.suffix.lower() in {".yaml", ".yml"}:
+        return config_path, config_path.parent
+    return config_path / "app.yaml", config_path
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

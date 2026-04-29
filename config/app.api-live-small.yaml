@@ -1,0 +1,27 @@
+# 本番 API 18080 向けの少額確認用設定です。
+# 実注文が市場へ送信される可能性があります。
+# 使用前に必ず config-summary と preflight-check を実行し、
+# trade_symbols と max_order_quantity を確認してください。
+mode: mock
+trading_mode: live
+live_enabled: true
+data_source_mode: api
+log_level: INFO
+rest_poll_interval_sec: 5
+push_enabled: false
+max_order_quantity: 1
+trade_symbols:
+  - "1306"
+position_reconciliation_enabled: true
+position_average_price_tolerance: 0.01
+kabu_api_environment: live
+api_timeout_sec: 5
+token_env_name: KABU_API_PASSWORD_LIVE
+snapshot_enabled: false
+snapshot_dir: snapshots
+snapshot_interval_sec: 60
+snapshot_max_generations: 3
+snapshot_debounce_sec: 5
+recovery_enabled: false
+recovery_mode: manual
+startup_reconcile_enabled: false

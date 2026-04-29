@@ -1,0 +1,28 @@
+# api-order-precheck / api-order-dry-run 用の実行設定です。
+# kabu ステーション検証 API 18081 に対して 1 回だけ注文フローを確認します。
+# 1306 は数量 10、1321 / 1570 は数量 1 を基本にしてください。
+mode: mock
+trading_mode: live
+live_enabled: true
+data_source_mode: api
+log_level: INFO
+rest_poll_interval_sec: 5
+push_enabled: false
+max_order_quantity: 10
+trade_symbols:
+  - "1306"
+  - "1321"
+  - "1570"
+position_reconciliation_enabled: true
+position_average_price_tolerance: 0.01
+kabu_api_environment: paper
+api_timeout_sec: 5
+token_env_name: KABU_API_PASSWORD_PAPER
+snapshot_enabled: false
+snapshot_dir: snapshots
+snapshot_interval_sec: 60
+snapshot_max_generations: 3
+snapshot_debounce_sec: 5
+recovery_enabled: false
+recovery_mode: manual
+startup_reconcile_enabled: false

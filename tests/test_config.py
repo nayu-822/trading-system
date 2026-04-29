@@ -50,6 +50,13 @@ def test_load_config_raises_when_file_missing() -> None:
         load_config(Path("missing_config"))
 
 
+def test_load_config_accepts_explicit_app_config_file() -> None:
+    config = load_config(Path("config/app.api-paper.yaml"))
+
+    assert config.app.kabu_api.environment == KabuApiEnvironment.PAPER
+    assert config.app.data_source_mode == DataSourceMode.API
+
+
 def test_validate_config_accepts_sample_config() -> None:
     config = load_config(Path("config"))
 
@@ -313,6 +320,24 @@ def test_live_order_permission_matrix(
 
     with pytest.raises(LiveOrderNotAllowedError):
         _ensure_live_order_allowed(target_config)
+
+
+@pytest.mark.parametrize(
+    "config_path",
+    [
+        Path("config/app.csv-paper.yaml"),
+        Path("config/app.api-paper.yaml"),
+        Path("config/app.api-paper-dry-run.yaml"),
+        Path("config/app.api-live-small.yaml"),
+        Path("config/app.backtest.yaml"),
+    ],
+)
+def test_runtime_config_files_do_not_include_real_password(config_path: Path) -> None:
+    text = config_path.read_text(encoding="utf-8")
+
+    assert "token_env_name:" in text
+    assert "password=" not in text.lower()
+    assert "token=" not in text.lower()
 
 
 def _build_test_app_config(

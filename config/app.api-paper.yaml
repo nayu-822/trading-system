@@ -1,0 +1,27 @@
+# kabu ステーション検証 API 18081 向けの実行設定です。
+# API 接続・建玉取得・注文状態取得の確認に使います。
+mode: mock
+trading_mode: live
+live_enabled: true
+data_source_mode: api
+log_level: INFO
+rest_poll_interval_sec: 5
+push_enabled: false
+max_order_quantity: 10
+trade_symbols:
+  - "1306"
+  - "1321"
+  - "1570"
+position_reconciliation_enabled: true
+position_average_price_tolerance: 0.01
+kabu_api_environment: paper
+api_timeout_sec: 5
+token_env_name: KABU_API_PASSWORD_PAPER
+snapshot_enabled: false
+snapshot_dir: snapshots
+snapshot_interval_sec: 60
+snapshot_max_generations: 3
+snapshot_debounce_sec: 5
+recovery_enabled: false
+recovery_mode: manual
+startup_reconcile_enabled: false
