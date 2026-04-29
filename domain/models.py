@@ -336,7 +336,7 @@ class SystemConfig:
 
 @dataclass(frozen=True)
 class TradingProcessConfig:
-    """TradingProcess 縺悟ｏ莉･髯仙ｮ壹☆繧区ｳｨ譁・ヵ繝ｪ繧ｷ繝ｼ縲・"""
+    """TradingProcess が参照する発注関連の実行設定。"""
 
     trading_mode: TradingMode
     live_enabled: bool

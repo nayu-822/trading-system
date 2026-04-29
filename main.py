@@ -193,11 +193,17 @@ class ApplicationRuntime:
             synced_count = self.external_data_process.sync_orders_once(
                 force_refresh=force_refresh
             )
-        except Exception:
+        except Exception as error:
             self.logger.exception("startup order resync failed")
-            if self.config.app.trading_mode == TradingMode.LIVE:
-                raise
-            return 0
+            risk_manager = self.trading_process.risk_manager
+            if risk_manager is not None:
+                risk_manager.halt_trading(
+                    reason=TradingHaltReason.ORDER_SYNC_FAILED,
+                    message=f"startup order resync failed: {error}",
+                    requires_manual_resume=True,
+                )
+                self.logger.error("startup order resync failed; trading halted")
+            raise
         self.logger.info("startup order resync completed count=%s", synced_count)
         self.reconcile_positions()
         return synced_count

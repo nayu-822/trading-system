@@ -32,6 +32,9 @@ from domain.models import (
     KabuOrderResult,
     Order,
     Position,
+    RiskConfig,
+    RiskControlState,
+    RiskSymbolConfig,
     SignalStrategyConfig,
     TradingProcessConfig,
     TradingSymbolConfig,
@@ -43,8 +46,71 @@ from processes.trading_process import TradingProcess
 from strategy.trend_strategy import TrendStrategy
 from trading.live_order_gateway import LiveOrderGateway
 from trading.order_safety_validator import OrderSafetyState, OrderSafetyValidator
+from trading.risk_manager import RiskManager
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
+
+
+def _risk_manager_for_process(
+    *,
+    symbol: str = "7203",
+    lot_size: int = 100,
+    lot_max: int | None = None,
+    account_equity: float = 1_000_000.0,
+    api_error_limit: int = 5,
+) -> RiskManager:
+    resolved_lot_max = lot_max if lot_max is not None else max(lot_size, 1)
+    return RiskManager(
+        config=RiskConfig(
+            max_daily_loss=10_000.0,
+            max_consecutive_losses=5,
+            resume_consecutive_wins=2,
+            max_positions=10,
+            max_position_per_symbol=10_000,
+            account_equity=account_equity,
+            max_drawdown=50_000.0,
+            kill_switch_enabled=True,
+            api_error_limit=api_error_limit,
+            trading_start_time="00:00",
+            trading_end_time="23:59",
+            order_timeout_sec=30,
+        ),
+        symbol_configs=(
+            RiskSymbolConfig(
+                symbol=symbol,
+                lot_min=max(lot_size, 1),
+                lot_max=resolved_lot_max,
+                allocation_ratio=1.0,
+            ),
+        ),
+        state=RiskControlState(
+            current_equity=account_equity,
+            max_equity=account_equity,
+        ),
+    )
+
+
+def _trading_process(
+    *,
+    event_bus: EventBus,
+    order_quantity: int = 1,
+    **kwargs: Any,
+) -> TradingProcess:
+    lot_configs = kwargs.get("lot_configs", ())
+    resolved_lot_size = (
+        lot_configs[0].lot_size if len(lot_configs) > 0 else max(order_quantity, 1)
+    )
+    if "risk_manager" not in kwargs or kwargs["risk_manager"] is None:
+        kwargs["risk_manager"] = _risk_manager_for_process(
+            lot_size=resolved_lot_size,
+            lot_max=resolved_lot_size,
+            api_error_limit=1,
+        )
+    return TradingProcess(
+        event_bus=event_bus,
+        order_quantity=order_quantity,
+        **kwargs,
+    )
 
 
 def _create_market_data_event(price: float, symbol: str = "7203") -> BaseEvent[Any]:
@@ -322,7 +388,7 @@ def test_signal_process_start_stop_start_does_not_duplicate_subscription() -> No
 
 def test_trading_process_publishes_order_requested_from_signal() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         lot_configs=(TradingSymbolConfig(symbol="7203", lot_size=200),),
@@ -342,7 +408,7 @@ def test_trading_process_publishes_order_requested_from_signal() -> None:
 
 def test_trading_process_does_not_publish_for_symbol_outside_trade_symbols() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=50,
         process_config=_trading_process_config(trade_symbols=("1306",)),
@@ -356,9 +422,24 @@ def test_trading_process_does_not_publish_for_symbol_outside_trade_symbols() -> 
     assert received_events == []
 
 
+def test_trading_process_does_not_publish_when_risk_manager_is_missing() -> None:
+    event_bus = EventBus()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        process_config=_trading_process_config(max_order_quantity=100),
+    )
+    received_events: list[BaseEvent[Any]] = []
+
+    trading_process.start()
+    event_bus.subscribe(EventType.ORDER_REQUESTED, received_events.append)
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+
+    assert received_events == []
+
+
 def test_trading_process_does_not_publish_when_symbol_state_is_busy() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=50)
+    trading_process = _trading_process(event_bus=event_bus, order_quantity=50)
     state = trading_process.get_state("7203")
     state.is_busy = True
     received_events: list[BaseEvent[Any]] = []
@@ -391,7 +472,7 @@ def test_trading_process_does_not_publish_when_quantity_is_zero() -> None:
         def calculate_lot(self, symbol: str, account_state) -> int:
             return 0
 
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         risk_manager=ZeroLotRiskManager(),  # type: ignore[arg-type]
         process_config=_trading_process_config(max_order_quantity=100),
@@ -409,7 +490,7 @@ def test_trading_process_does_not_publish_when_quantity_exceeds_max_order_quanti
     None
 ):
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         process_config=_trading_process_config(max_order_quantity=50),
@@ -423,9 +504,115 @@ def test_trading_process_does_not_publish_when_quantity_exceeds_max_order_quanti
     assert received_events == []
 
 
+def test_trading_process_does_not_publish_when_reference_price_is_missing() -> None:
+    event_bus = EventBus()
+    trading_process = _trading_process(
+        event_bus=event_bus,
+        order_quantity=100,
+        process_config=_trading_process_config(max_order_quantity=100),
+    )
+    received_events: list[BaseEvent[Any]] = []
+    timestamp = datetime(2026, 4, 18, tzinfo=timezone.utc)
+
+    trading_process.start()
+    event_bus.subscribe(EventType.ORDER_REQUESTED, received_events.append)
+    event_bus.publish(
+        EventFactory(source=EventSource.SIGNAL).create(
+            event_type=EventType.SIGNAL_DETECTED,
+            timestamp=timestamp,
+            symbol="7203",
+            payload=SignalPayload(
+                signal_type=SignalType.BUY,
+                strategy_type=StrategyType.TREND,
+                indicators=(),
+            ),
+        )
+    )
+
+    assert received_events == []
+
+
+def test_trading_process_does_not_publish_when_reference_price_is_not_positive() -> (
+    None
+):
+    event_bus = EventBus()
+    trading_process = _trading_process(
+        event_bus=event_bus,
+        order_quantity=100,
+        process_config=_trading_process_config(max_order_quantity=100),
+    )
+    received_events: list[BaseEvent[Any]] = []
+    timestamp = datetime(2026, 4, 18, tzinfo=timezone.utc)
+
+    trading_process.start()
+    event_bus.subscribe(EventType.ORDER_REQUESTED, received_events.append)
+    event_bus.publish(
+        EventFactory(source=EventSource.SIGNAL).create(
+            event_type=EventType.SIGNAL_DETECTED,
+            timestamp=timestamp,
+            symbol="7203",
+            payload=SignalPayload(
+                signal_type=SignalType.BUY,
+                strategy_type=StrategyType.TREND,
+                indicators=(IndicatorValue(name="current_price", value=0.0),),
+            ),
+        )
+    )
+
+    assert received_events == []
+
+
+def test_trading_process_does_not_call_calculate_lot_when_reference_price_is_invalid() -> (
+    None
+):
+    class SpyRiskManager:
+        def __init__(self) -> None:
+            self.state = type(
+                "RiskState",
+                (),
+                {
+                    "kill_switch_active": False,
+                    "trading_halt_reason": None,
+                    "current_equity": 1_000_000.0,
+                },
+            )()
+            self.calculate_lot_calls = 0
+
+        def can_enter(self, symbol: str, side: OrderSide, current_state) -> bool:
+            return True
+
+        def calculate_lot(self, symbol: str, account_state) -> int:
+            self.calculate_lot_calls += 1
+            return 100
+
+    event_bus = EventBus()
+    spy_risk_manager = SpyRiskManager()
+    trading_process = TradingProcess(
+        event_bus=event_bus,
+        risk_manager=spy_risk_manager,  # type: ignore[arg-type]
+        process_config=_trading_process_config(max_order_quantity=100),
+    )
+
+    trading_process.start()
+    event_bus.publish(
+        EventFactory(source=EventSource.SIGNAL).create(
+            event_type=EventType.SIGNAL_DETECTED,
+            timestamp=datetime(2026, 4, 18, tzinfo=timezone.utc),
+            symbol="7203",
+            payload=SignalPayload(
+                signal_type=SignalType.BUY,
+                strategy_type=StrategyType.TREND,
+                indicators=(IndicatorValue(name="current_price", value=0.0),),
+            ),
+        )
+    )
+
+    assert spy_risk_manager.calculate_lot_calls == 0
+
+
 def test_trading_process_does_not_publish_sell_without_position() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    trading_process = _trading_process(event_bus=event_bus, order_quantity=100)
     received_events: list[BaseEvent[Any]] = []
 
     trading_process.start()
@@ -437,7 +624,7 @@ def test_trading_process_does_not_publish_sell_without_position() -> None:
 
 def test_trading_process_uses_configured_quantity_instead_of_fixed_100() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=25,
         process_config=_trading_process_config(max_order_quantity=25),
@@ -454,7 +641,7 @@ def test_trading_process_uses_configured_quantity_instead_of_fixed_100() -> None
 
 def test_trading_process_does_not_publish_when_market_is_closed() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=25,
         process_config=_trading_process_config(
@@ -475,7 +662,7 @@ def test_trading_process_does_not_publish_when_market_is_closed() -> None:
 
 def test_trading_process_does_not_publish_duplicate_order_for_same_symbol() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -496,7 +683,7 @@ def test_trading_process_does_not_publish_duplicate_order_for_same_symbol() -> N
 
 def test_trading_process_ignores_same_direction_signal_when_position_exists() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    trading_process = _trading_process(event_bus=event_bus, order_quantity=100)
     state = trading_process.get_state("7203")
     assert state.position is not None
     state.position.quantity = 100
@@ -514,7 +701,7 @@ def test_trading_process_ignores_all_signals_when_position_mismatch_halts_tradin
     None
 ):
     event_bus = EventBus()
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    trading_process = _trading_process(event_bus=event_bus, order_quantity=100)
     assert trading_process.risk_manager is not None
     trading_process.risk_manager.activate_kill_switch(
         TradingHaltReason.POSITION_MISMATCH
@@ -531,7 +718,7 @@ def test_trading_process_ignores_all_signals_when_position_mismatch_halts_tradin
 
 def test_trading_process_publishes_exit_order_when_position_exists() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         process_config=_trading_process_config(max_order_quantity=200),
@@ -554,7 +741,7 @@ def test_trading_process_publishes_exit_order_when_position_exists() -> None:
 
 def test_trading_process_ignores_exit_signal_without_position() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    trading_process = _trading_process(event_bus=event_bus, order_quantity=100)
     received_events: list[BaseEvent[Any]] = []
 
     trading_process.start()
@@ -566,7 +753,7 @@ def test_trading_process_ignores_exit_signal_without_position() -> None:
 
 def test_trading_process_updates_position_from_order_status() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -604,7 +791,7 @@ def test_trading_process_updates_position_from_order_status() -> None:
 
 def test_trading_process_publishes_position_updated_after_paper_fill() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    trading_process = _trading_process(event_bus=event_bus, order_quantity=100)
     received_positions: list[BaseEvent[Any]] = []
 
     trading_process.start()
@@ -622,7 +809,7 @@ def test_trading_process_publishes_position_updated_after_paper_fill() -> None:
 
 def test_trading_process_uses_gateway_without_direct_fill() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    trading_process = _trading_process(event_bus=event_bus, order_quantity=100)
     received_statuses: list[BaseEvent[Any]] = []
 
     trading_process.start()
@@ -643,7 +830,7 @@ def test_trading_process_handles_live_gateway_failure_safely(caplog) -> None:
             raise KabuApiError("api failed")
 
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         order_gateway=LiveOrderGateway(
@@ -686,7 +873,7 @@ def test_live_order_keeps_requested_state_after_send() -> None:
             )
 
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         order_gateway=LiveOrderGateway(
@@ -710,7 +897,7 @@ def test_live_order_keeps_requested_state_after_send() -> None:
 
 def test_trading_process_updates_order_from_rest_status() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -743,7 +930,7 @@ def test_trading_process_updates_order_from_rest_status() -> None:
 
 def test_trading_process_restores_open_order_from_api_status() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -773,7 +960,7 @@ def test_trading_process_restores_open_order_from_api_status() -> None:
 
 def test_trading_process_restored_exit_sell_reduces_long_position() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -805,7 +992,7 @@ def test_trading_process_restored_exit_sell_reduces_long_position() -> None:
 
 def test_trading_process_restored_exit_buy_reduces_short_position() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -837,7 +1024,7 @@ def test_trading_process_restored_exit_buy_reduces_short_position() -> None:
 
 def test_trading_process_restored_new_buy_increases_long_position() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -867,7 +1054,7 @@ def test_trading_process_restored_new_buy_increases_long_position() -> None:
 
 def test_trading_process_restored_new_sell_increases_short_position() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -897,7 +1084,7 @@ def test_trading_process_restored_new_sell_increases_short_position() -> None:
 
 def test_trading_process_ignores_when_existing_order_is_exit_conflicts() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -927,7 +1114,7 @@ def test_trading_process_ignores_when_existing_order_is_exit_conflicts() -> None
 
 def test_trading_process_keeps_partial_fill_in_open_orders() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -960,7 +1147,7 @@ def test_trading_process_keeps_partial_fill_in_open_orders() -> None:
 
 def test_trading_process_reflects_partial_fill_delta_only() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -1001,7 +1188,7 @@ def test_trading_process_reflects_partial_fill_delta_only() -> None:
 
 def test_trading_process_removes_canceled_order_from_open_orders() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -1028,7 +1215,7 @@ def test_trading_process_removes_canceled_order_from_open_orders() -> None:
 
 def test_trading_process_reflects_partial_fill_before_canceled() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -1058,7 +1245,7 @@ def test_trading_process_reflects_partial_fill_before_canceled() -> None:
 
 def test_trading_process_removes_expired_order_from_open_orders() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -1085,7 +1272,7 @@ def test_trading_process_removes_expired_order_from_open_orders() -> None:
 
 def test_trading_process_reflects_partial_fill_before_expired() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -1116,7 +1303,7 @@ def test_trading_process_reflects_partial_fill_before_expired() -> None:
 def test_trading_process_calls_order_status_syncer_after_order() -> None:
     sync_calls: list[str] = []
     event_bus = EventBus()
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    trading_process = _trading_process(event_bus=event_bus, order_quantity=100)
     trading_process.order_status_syncer = lambda: sync_calls.append("sync") or 0
 
     trading_process.start()
@@ -1127,7 +1314,7 @@ def test_trading_process_calls_order_status_syncer_after_order() -> None:
 
 def test_trading_process_does_not_double_reflect_same_filled_quantity() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -1172,7 +1359,7 @@ def test_trading_process_does_not_additional_order_when_order_status_sync_fails(
             )
 
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         order_gateway=LiveOrderGateway(
@@ -1200,7 +1387,7 @@ def test_trading_process_does_not_additional_order_when_order_status_sync_fails(
 
 def test_trading_process_ignores_when_filled_quantity_decreases() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -1239,7 +1426,7 @@ def test_trading_process_ignores_when_filled_quantity_decreases() -> None:
 
 def test_trading_process_ignores_when_filled_quantity_exceeds_order_quantity() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -1268,7 +1455,7 @@ def test_trading_process_ignores_when_filled_quantity_exceeds_order_quantity() -
 
 def test_trading_process_updates_average_price_when_new_buy_is_added() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -1307,7 +1494,7 @@ def test_trading_process_updates_average_price_when_new_buy_is_added() -> None:
 
 def test_trading_process_reduces_position_when_exit_sell_fills() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -1349,7 +1536,7 @@ def test_trading_process_reduces_position_when_exit_sell_fills() -> None:
 
 def test_trading_process_ignores_exit_fill_without_position() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -1388,7 +1575,7 @@ def test_trading_process_ignores_exit_fill_without_position() -> None:
 
 def test_trading_process_does_not_rollback_terminal_order_status() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -1426,7 +1613,7 @@ def test_trading_process_does_not_rollback_terminal_order_status() -> None:
 
 def test_trading_process_ignores_duplicate_filled_event() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=100,
         auto_fill_orders=False,
@@ -1454,7 +1641,7 @@ def test_trading_process_ignores_duplicate_filled_event() -> None:
 
 
 def test_trading_process_resyncs_order_status_after_restore() -> None:
-    original_process = TradingProcess(
+    original_process = _trading_process(
         event_bus=EventBus(),
         order_quantity=100,
         auto_fill_orders=False,
@@ -1465,7 +1652,7 @@ def test_trading_process_resyncs_order_status_after_restore() -> None:
     original_state.orders[0].external_order_id = "api-order-1"
     snapshot = original_process.get_snapshot(_timestamp())
 
-    restored_process = TradingProcess(
+    restored_process = _trading_process(
         event_bus=EventBus(),
         order_quantity=100,
         auto_fill_orders=False,
@@ -1494,7 +1681,7 @@ def test_trading_process_resyncs_order_status_after_restore() -> None:
 
 def test_trading_process_start_stop_start_does_not_duplicate_subscription() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    trading_process = _trading_process(event_bus=event_bus, order_quantity=100)
     received_orders: list[BaseEvent[Any]] = []
 
     trading_process.start()
@@ -1510,7 +1697,7 @@ def test_trading_process_start_stop_start_does_not_duplicate_subscription() -> N
 
 def test_trading_process_updates_average_price_when_long_reverses_to_short() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=200,
         auto_fill_orders=False,
@@ -1537,7 +1724,7 @@ def test_trading_process_updates_average_price_when_long_reverses_to_short() -> 
 
 def test_trading_process_updates_average_price_when_short_reverses_to_long() -> None:
     event_bus = EventBus()
-    trading_process = TradingProcess(
+    trading_process = _trading_process(
         event_bus=event_bus,
         order_quantity=200,
         auto_fill_orders=False,
@@ -1569,7 +1756,7 @@ def test_csv_event_flow_publishes_order_requested_end_to_end() -> None:
         trend_short_window=1,
         trend_long_window=2,
     )
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    trading_process = _trading_process(event_bus=event_bus, order_quantity=100)
     external_data_process = ExternalDataProcess(
         event_bus=event_bus,
         csv_loader=CsvMarketDataLoader(),
@@ -1596,7 +1783,7 @@ def test_csv_event_flow_publishes_position_updated_in_paper_mode() -> None:
         trend_short_window=1,
         trend_long_window=2,
     )
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    trading_process = _trading_process(event_bus=event_bus, order_quantity=100)
     external_data_process = ExternalDataProcess(
         event_bus=event_bus,
         csv_loader=CsvMarketDataLoader(),
@@ -1624,7 +1811,7 @@ def test_api_event_flow_publishes_position_updated_in_paper_mode() -> None:
         trend_short_window=1,
         trend_long_window=2,
     )
-    trading_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    trading_process = _trading_process(event_bus=event_bus, order_quantity=100)
     external_data_process = ExternalDataProcess(
         event_bus=event_bus,
         push_client=_FakePushClient(),

@@ -21,12 +21,74 @@ from domain.events import (
     PositionPayload,
     SignalPayload,
 )
-from domain.models import Order, Position, TradeHistory, TradingSymbolState
+from domain.models import (
+    Order,
+    Position,
+    RiskConfig,
+    RiskControlState,
+    RiskSymbolConfig,
+    TradeHistory,
+    TradingSymbolState,
+)
 from infrastructure.event_bus import EventBus
 from infrastructure.file_storage import FileStorage
 from processes.persistence_process import PersistenceProcess
 from processes.snapshot_process import SnapshotProcess
 from processes.trading_process import TradingProcess
+from trading.risk_manager import RiskManager
+
+
+def _risk_manager_for_process(
+    *,
+    symbol: str = "7203",
+    lot_size: int = 100,
+    account_equity: float = 1_000_000.0,
+) -> RiskManager:
+    return RiskManager(
+        config=RiskConfig(
+            max_daily_loss=10_000.0,
+            max_consecutive_losses=5,
+            resume_consecutive_wins=2,
+            max_positions=10,
+            max_position_per_symbol=10_000,
+            account_equity=account_equity,
+            max_drawdown=50_000.0,
+            kill_switch_enabled=True,
+            api_error_limit=5,
+            trading_start_time="00:00",
+            trading_end_time="23:59",
+            order_timeout_sec=30,
+        ),
+        symbol_configs=(
+            RiskSymbolConfig(
+                symbol=symbol,
+                lot_min=max(lot_size, 1),
+                lot_max=max(lot_size, 1),
+                allocation_ratio=1.0,
+            ),
+        ),
+        state=RiskControlState(
+            current_equity=account_equity,
+            max_equity=account_equity,
+        ),
+    )
+
+
+def _trading_process(
+    *,
+    event_bus: EventBus,
+    order_quantity: int = 1,
+    **kwargs,
+) -> TradingProcess:
+    if "risk_manager" not in kwargs or kwargs["risk_manager"] is None:
+        kwargs["risk_manager"] = _risk_manager_for_process(
+            lot_size=max(order_quantity, 1)
+        )
+    return TradingProcess(
+        event_bus=event_bus,
+        order_quantity=order_quantity,
+        **kwargs,
+    )
 
 
 def test_persistence_process_saves_event_to_json_lines() -> None:
@@ -123,7 +185,7 @@ def test_snapshot_process_saves_trading_snapshot() -> None:
     event_bus = EventBus()
     snapshot_path = _test_file_path("trading_snapshot_save.json")
     _remove_file(snapshot_path)
-    trading_process = TradingProcess(event_bus=event_bus)
+    trading_process = _trading_process(event_bus=event_bus)
     state = trading_process.get_state("7203")
     assert state.position is not None
     state.position.quantity = 100
@@ -154,7 +216,7 @@ def test_snapshot_process_does_not_duplicate_after_restart() -> None:
     event_bus = EventBus()
     snapshot_path = _test_file_path("trading_snapshot_restart.json")
     _remove_file(snapshot_path)
-    trading_process = TradingProcess(event_bus=event_bus)
+    trading_process = _trading_process(event_bus=event_bus)
     snapshot_process = SnapshotProcess(
         event_bus=event_bus,
         trading_process=trading_process,
@@ -177,7 +239,7 @@ def test_snapshot_process_start_stop_start_keeps_single_subscription() -> None:
     event_bus = EventBus()
     snapshot_path = _test_file_path("trading_snapshot_restart_subscription.json")
     _remove_file(snapshot_path)
-    trading_process = TradingProcess(event_bus=event_bus)
+    trading_process = _trading_process(event_bus=event_bus)
     snapshot_process = SnapshotProcess(
         event_bus=event_bus,
         trading_process=trading_process,
@@ -202,7 +264,7 @@ def test_trading_process_restores_snapshot() -> None:
     storage = FileStorage()
     snapshot_path = _test_file_path("trading_snapshot_restore.json")
     _remove_file(snapshot_path)
-    original_process = TradingProcess(event_bus=EventBus(), order_quantity=100)
+    original_process = _trading_process(event_bus=EventBus(), order_quantity=100)
     state = original_process.get_state("7203")
     assert state.position is not None
     state.position.quantity = 100
@@ -210,7 +272,7 @@ def test_trading_process_restores_snapshot() -> None:
     snapshot = original_process.get_snapshot(_timestamp())
     storage.overwrite_json(snapshot_path, snapshot.to_dict())
 
-    restored_process = TradingProcess(event_bus=EventBus())
+    restored_process = _trading_process(event_bus=EventBus())
     snapshot_process = SnapshotProcess(
         event_bus=EventBus(),
         trading_process=restored_process,
@@ -231,7 +293,7 @@ def test_trading_process_continues_after_snapshot_restore() -> None:
     storage = FileStorage()
     snapshot_path = _test_file_path("trading_snapshot_continue.json")
     _remove_file(snapshot_path)
-    original_process = TradingProcess(event_bus=EventBus())
+    original_process = _trading_process(event_bus=EventBus())
     original_process.states.append(
         TradingSymbolState(
             symbol="7203",
@@ -247,7 +309,7 @@ def test_trading_process_continues_after_snapshot_restore() -> None:
         snapshot_path, original_process.get_snapshot(_timestamp()).to_dict()
     )
     event_bus = EventBus()
-    restored_process = TradingProcess(event_bus=event_bus, order_quantity=100)
+    restored_process = _trading_process(event_bus=event_bus, order_quantity=100)
     snapshot_process = SnapshotProcess(
         event_bus=event_bus,
         trading_process=restored_process,
@@ -259,6 +321,7 @@ def test_trading_process_continues_after_snapshot_restore() -> None:
     assert snapshot_process.restore() is True
     restored_process.start()
     event_bus.subscribe(EventType.ORDER_REQUESTED, received_orders.append)
+    event_bus.publish(_create_market_data_event(price=1000.0))
     event_bus.publish(_create_signal_event(SignalType.EXIT))
 
     assert len(received_orders) == 1
@@ -272,7 +335,7 @@ def test_trading_process_restores_reflected_quantity_and_trade_history() -> None
     storage = FileStorage()
     snapshot_path = _test_file_path("trading_snapshot_trade_history.json")
     _remove_file(snapshot_path)
-    original_process = TradingProcess(event_bus=EventBus())
+    original_process = _trading_process(event_bus=EventBus())
     state = original_process.get_state("7203")
     state.orders.append(
         Order(
@@ -306,7 +369,7 @@ def test_trading_process_restores_reflected_quantity_and_trade_history() -> None
         snapshot_path, original_process.get_snapshot(_timestamp()).to_dict()
     )
 
-    restored_process = TradingProcess(event_bus=EventBus())
+    restored_process = _trading_process(event_bus=EventBus())
     snapshot_process = SnapshotProcess(
         event_bus=EventBus(),
         trading_process=restored_process,
@@ -327,7 +390,7 @@ def test_trading_process_restores_trading_halt_state_from_snapshot() -> None:
     storage = FileStorage()
     snapshot_path = _test_file_path("trading_snapshot_halt_state.json")
     _remove_file(snapshot_path)
-    original_process = TradingProcess(event_bus=EventBus())
+    original_process = _trading_process(event_bus=EventBus())
     assert original_process.risk_manager is not None
     original_process.risk_manager.halt_trading(
         reason=TradingHaltReason.POSITION_MISMATCH,
@@ -337,7 +400,7 @@ def test_trading_process_restores_trading_halt_state_from_snapshot() -> None:
         snapshot_path, original_process.get_snapshot(_timestamp()).to_dict()
     )
 
-    restored_process = TradingProcess(event_bus=EventBus())
+    restored_process = _trading_process(event_bus=EventBus())
     snapshot_process = SnapshotProcess(
         event_bus=EventBus(),
         trading_process=restored_process,

@@ -2389,6 +2389,13 @@ class _FakeRuntime:
         return self.api_order_precheck_result
 
 
+def test_coding_rules_include_utf8_and_mojibake_prevention_rules() -> None:
+    rules = Path("docs/coding_rules.md").read_text(encoding="utf-8")
+
+    assert "UTF-8" in rules
+    assert "文字化け" in rules
+
+
 def _timestamp() -> datetime:
     return datetime(2026, 4, 25, tzinfo=timezone.utc)
 

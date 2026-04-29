@@ -27,9 +27,7 @@ from domain.models import (
     AccountState,
     Order,
     Position,
-    RiskConfig,
     RiskControlState,
-    RiskSymbolConfig,
     TradeHistory,
     TradeResult,
     TradingProcessConfig,
@@ -72,18 +70,19 @@ TERMINAL_ORDER_STATUSES = {
 
 @dataclass(frozen=True)
 class OrderRequestDecision:
-    """SignalDetected 縺九ｉ OrderRequested 繧定｡後∴繧九°縺ｮ蛻､螳壹・邨先棡縲・"""
+    """SignalDetected から OrderRequested を発行できるかの判定結果。"""
 
     allowed: bool
     reason: str
     side: OrderSide | None = None
     quantity: int = 0
     is_exit: bool = False
+    reference_price: float | None = None
 
 
 @dataclass
 class TradingProcess:
-    """シグナルから発注可否と売買状態を管理する。"""
+    """シグナルから発注可否と注文イベントを制御する。"""
 
     event_bus: EventBus
     order_quantity: int = 1
@@ -112,11 +111,6 @@ class TradingProcess:
     def __post_init__(self) -> None:
         if self.order_gateway is None:
             self.order_gateway = MockOrderGateway(event_factory=self.event_factory)
-        if self.risk_manager is None:
-            self.risk_manager = _default_risk_manager(
-                lot_configs=self.lot_configs,
-                order_quantity=self.order_quantity,
-            )
         if self.process_config is None:
             self.process_config = _default_trading_process_config(
                 lot_configs=self.lot_configs,
@@ -156,14 +150,14 @@ class TradingProcess:
         self._subscribed = False
 
     def handle_market_data(self, event: BaseEvent) -> None:
-        """市場価格をロット計算の基準価格として保持する。"""
+        """市場価格をロット計算用の参照価格として保持する。"""
 
         if not isinstance(event, MarketDataUpdated) or event.symbol is None:
             return
         self._set_latest_price(symbol=event.symbol, price=event.payload.price)
 
     def handle_signal(self, event: BaseEvent) -> None:
-        """シグナルを受けて発注要求を生成する。"""
+        """シグナルを受けて安全条件を満たす場合だけ発注イベントを出す。"""
 
         if not isinstance(event, SignalDetected):
             return
@@ -185,6 +179,13 @@ class TradingProcess:
                 reason=decision.reason,
             )
             return
+        if decision.reference_price is None or decision.reference_price <= 0:
+            self._log_signal_rejected(
+                symbol=event.symbol,
+                signal_type=event.payload.signal_type,
+                reason="reference price is invalid",
+            )
+            return
         order = Order(
             order_id=str(uuid4()),
             symbol=event.symbol,
@@ -193,7 +194,7 @@ class TradingProcess:
             order_type=self.order_type,
             is_exit=decision.is_exit,
             status=OrderStatus.REQUESTED,
-            price=self._reference_price(event.symbol),
+            price=decision.reference_price,
             remaining_quantity=decision.quantity,
         )
         state.is_busy = True
@@ -222,7 +223,7 @@ class TradingProcess:
         self._execute_order(order=order, timestamp=event.timestamp)
 
     def handle_order_status(self, event: BaseEvent) -> None:
-        """注文状態イベントを受けて注文と建玉を更新する。"""
+        """注文状態イベントを反映して注文と建玉を更新する。"""
 
         if not isinstance(event, OrderStatusUpdated):
             return
@@ -318,7 +319,7 @@ class TradingProcess:
         self._reconcile_position_after_order_status(order.symbol)
 
     def apply_order_status_events(self, events: tuple[OrderStatusUpdated, ...]) -> None:
-        """再同期で取得した注文状態イベントを内部状態へ取り込む。"""
+        """同期済みの注文状態イベントをまとめて適用する。"""
 
         self.logger.info("order resync started count=%s", len(events))
         for event in events:
@@ -384,7 +385,7 @@ class TradingProcess:
         self.event_bus.publish(position_event)
 
     def get_state(self, symbol: str) -> TradingSymbolState:
-        """銘柄別の売買状態を取得し、なければ初期化する。"""
+        """銘柄ごとの売買状態を取得し、なければ作成する。"""
 
         for state in self.states:
             if state.symbol == symbol:
@@ -398,7 +399,7 @@ class TradingProcess:
         return state
 
     def get_snapshot(self, timestamp: datetime) -> TradingStateSnapshot:
-        """現在の売買状態を復旧用スナップショットへ変換する。"""
+        """現在の売買状態をスナップショットへ変換する。"""
 
         return TradingStateSnapshot(
             version=1,
@@ -410,7 +411,7 @@ class TradingProcess:
         )
 
     def restore_snapshot(self, snapshot: TradingStateSnapshot) -> None:
-        """復旧用スナップショットから内部状態を復元する。"""
+        """保存済みスナップショットから売買状態を復元する。"""
 
         self.states = [
             TradingSymbolState(
@@ -566,7 +567,7 @@ class TradingProcess:
         event: SignalDetected,
         state: TradingSymbolState,
     ) -> OrderRequestDecision:
-        """SignalDetected から安全な発注可否を判定する。"""
+        """発注前の安全判定をまとめて実行する。"""
 
         position = self._ensure_position(state)
         if not self._is_symbol_allowed(event.symbol):
@@ -580,6 +581,8 @@ class TradingProcess:
             return OrderRequestDecision(False, "incomplete order exists")
         if state.is_busy:
             return OrderRequestDecision(False, "symbol is busy")
+        if self.risk_manager is None:
+            return OrderRequestDecision(False, "risk manager is missing")
 
         order_side = self._resolve_order_side(
             signal_type=event.payload.signal_type,
@@ -595,6 +598,11 @@ class TradingProcess:
             return OrderRequestDecision(False, "same direction position exists")
         if not self._is_market_open():
             return OrderRequestDecision(False, "market is closed")
+        reference_price = self._reference_price(event.symbol)
+        if reference_price is None:
+            return OrderRequestDecision(False, "reference price is missing")
+        if reference_price <= 0:
+            return OrderRequestDecision(False, "reference price must be positive")
         if event.payload.signal_type == SignalType.SELL and position.quantity <= 0:
             return OrderRequestDecision(False, "sellable position does not exist")
         if event.payload.signal_type != SignalType.EXIT and not self._can_enter(
@@ -609,6 +617,7 @@ class TradingProcess:
             lot_size=state.lot_size,
             symbol=event.symbol,
             side=order_side,
+            reference_price=reference_price,
         )
         if quantity <= 0:
             return OrderRequestDecision(False, "quantity is not positive")
@@ -620,17 +629,18 @@ class TradingProcess:
             side=order_side,
             quantity=quantity,
             is_exit=event.payload.signal_type == SignalType.EXIT,
+            reference_price=reference_price,
         )
 
     def _is_symbol_allowed(self, symbol: str | None) -> bool:
-        """発注対象銘柄が許可リストに含まれるかを返す。"""
+        """対象銘柄が取引許可リストに含まれるかを返す。"""
 
         if symbol is None or self.process_config is None:
             return False
         return symbol in self.process_config.trade_symbols
 
     def _configuration_rejection_reason(self) -> str | None:
-        """発注設定に問題がある場合は拒否理由を返す。"""
+        """発注設定に矛盾がある場合は理由を返す。"""
 
         if self.process_config is None:
             return "trading configuration is missing"
@@ -656,14 +666,14 @@ class TradingProcess:
         return None
 
     def _is_trading_halted(self) -> bool:
-        """リスク停止中かどうかを返す。"""
+        """売買停止中かどうかを返す。"""
 
         return bool(
             self.risk_manager is not None and self.risk_manager.state.kill_switch_active
         )
 
     def _trading_halt_reason(self) -> str:
-        """停止中ログに使う理由文字列を返す。"""
+        """売買停止中の理由をログ用文字列で返す。"""
 
         if self.risk_manager is None:
             return "trading is halted"
@@ -692,10 +702,10 @@ class TradingProcess:
         return start_time <= current_time <= end_time
 
     def _can_enter(self, symbol: str, side: OrderSide) -> bool:
-        """新規エントリー可能かを RiskManager で判定する。"""
+        """新規エントリー可否を RiskManager へ問い合わせる。"""
 
         if self.risk_manager is None:
-            return True
+            return False
         return self.risk_manager.can_enter(
             symbol=symbol,
             side=side,
@@ -708,7 +718,7 @@ class TradingProcess:
         signal_type: SignalType | None,
         reason: str,
     ) -> None:
-        """発注しなかった理由を安全にログ出力する。"""
+        """発注しなかった理由を警告ログへ残す。"""
 
         self.logger.warning(
             "signal ignored symbol=%s signal_type=%s reason=%s",
@@ -751,16 +761,17 @@ class TradingProcess:
         lot_size: int,
         symbol: str,
         side: OrderSide,
+        reference_price: float,
     ) -> int:
         if signal_type == SignalType.EXIT:
             return abs(position.quantity)
         if self.risk_manager is None:
-            return lot_size
+            return 0
         return self.risk_manager.calculate_lot(
             symbol=symbol,
             account_state=AccountState(
                 available_equity=self.risk_manager.state.current_equity,
-                reference_price=self._reference_price(symbol),
+                reference_price=reference_price,
             ),
         )
 
@@ -826,13 +837,7 @@ class TradingProcess:
         self,
         event: OrderStatusUpdated,
     ) -> Order | None:
-        """API同期イベントから未完了注文を復元する。
-
-        Args:
-            event: 復元元の注文状態更新イベント。
-        Returns:
-            復元した注文。復元不要または復元失敗時は None。
-        """
+        """API由来の注文状態から内部注文を復元する。"""
 
         if event.symbol is None:
             return None
@@ -880,14 +885,7 @@ class TradingProcess:
         order: Order,
         event: OrderStatusUpdated,
     ) -> bool:
-        """注文数量と約定数量の整合を判定する。
-
-        Args:
-            order: 既存の内部注文。
-            event: 適用対象の注文状態更新イベント。
-        Returns:
-            整合している場合は True。
-        """
+        """注文数量と約定数量の整合性を判定する。"""
 
         order_quantity = event.payload.order_quantity or order.quantity
         return (
@@ -900,14 +898,7 @@ class TradingProcess:
         order: Order,
         event: OrderStatusUpdated,
     ) -> bool:
-        """既存注文と同期イベントの is_exit 整合性を判定する。
-
-        Args:
-            order: 既存の内部注文。
-            event: 同期対象の注文状態更新イベント。
-        Returns:
-            矛盾がない場合は True。
-        """
+        """返済注文フラグの整合性を判定する。"""
 
         return order.is_exit == event.payload.is_exit
 
@@ -916,27 +907,13 @@ class TradingProcess:
         state: TradingSymbolState,
         order: Order,
     ) -> None:
-        """終端状態の注文を未完了注文一覧から取り除く。
-
-        Args:
-            state: 注文を保持する銘柄状態。
-            order: 取り除く注文。
-        Returns:
-            なし。
-        """
+        """終端状態の注文を内部状態から取り除く。"""
 
         if order in state.orders:
             state.orders.remove(order)
 
     def _reconcile_position_after_order_status(self, symbol: str) -> None:
-        """注文状態反映後に建玉突合を実行する。
-
-        Args:
-            symbol: 突合対象の銘柄コード。
-
-        Returns:
-            なし。
-        """
+        """注文状態更新後に建玉突合を呼び出す。"""
 
         if self.position_reconciliation_handler is None:
             return
@@ -983,55 +960,13 @@ class TradingProcess:
         )
 
 
-def _default_risk_manager(
-    lot_configs: tuple[TradingSymbolConfig, ...],
-    order_quantity: int,
-) -> RiskManager:
-    max_lot = max(
-        (lot_config.lot_size for lot_config in lot_configs), default=order_quantity
-    )
-    return RiskManager(
-        config=RiskConfig(
-            max_daily_loss=1_000_000_000.0,
-            max_consecutive_losses=1_000_000,
-            resume_consecutive_wins=1,
-            max_positions=1_000_000,
-            max_position_per_symbol=1_000_000_000,
-            account_equity=1_000_000_000.0,
-            max_drawdown=1_000_000_000.0,
-            kill_switch_enabled=True,
-            api_error_limit=1_000_000,
-            trading_start_time="00:00",
-            trading_end_time="23:59",
-            order_timeout_sec=30,
-        ),
-        symbol_configs=tuple(
-            RiskSymbolConfig(
-                symbol=lot_config.symbol,
-                lot_min=lot_config.lot_size,
-                lot_max=max(lot_config.lot_size, max_lot),
-                allocation_ratio=1.0,
-            )
-            for lot_config in lot_configs
-        )
-        or (
-            RiskSymbolConfig(
-                symbol="7203",
-                lot_min=order_quantity,
-                lot_max=order_quantity,
-                allocation_ratio=1.0,
-            ),
-        ),
-    )
-
-
 def _default_trading_process_config(
     lot_configs: tuple[TradingSymbolConfig, ...],
     order_quantity: int,
     order_type: str,
     risk_manager: RiskManager | None,
 ) -> TradingProcessConfig:
-    """TradingProcess 単体利用時の安全側デフォルト設定を組み立てる。"""
+    """TradingProcess の最小構成用設定を組み立てる。"""
 
     trade_symbols = tuple(lot_config.symbol for lot_config in lot_configs) or ("7203",)
     trading_start_time = "00:00"
@@ -1059,6 +994,6 @@ def _default_trading_process_config(
 
 
 def _current_local_datetime() -> datetime:
-    """ローカルタイムゾーンの現在時刻を返す。"""
+    """ローカルタイムゾーンの現在日時を返す。"""
 
     return datetime.now().astimezone()

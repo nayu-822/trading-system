@@ -242,8 +242,8 @@ def _risk_manager(
             max_drawdown=max_drawdown,
             kill_switch_enabled=True,
             api_error_limit=api_error_limit,
-            trading_start_time="09:00",
-            trading_end_time="15:00",
+            trading_start_time="00:00",
+            trading_end_time="23:59",
             order_timeout_sec=30,
         ),
         symbol_configs=(

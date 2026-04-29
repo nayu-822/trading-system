@@ -5,6 +5,8 @@ from pathlib import Path
 from threading import Event
 from typing import Any
 
+import pytest
+
 import main as app_main
 from domain.enums import (
     DataSourceMode,
@@ -102,6 +104,38 @@ def test_runtime_keeps_csv_paper_flow(monkeypatch) -> None:
     assert fake_external.sync_count == 0
     assert state.position is not None
     assert state.position.quantity == 100
+
+
+def test_runtime_halts_when_startup_order_resync_fails_in_api_paper(
+    monkeypatch,
+) -> None:
+    snapshot_dir = _test_dir("api_paper_sync_failed")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.API,
+        snapshot_dir=snapshot_dir,
+    )
+    fake_external = _FakeExternalDataProcess(
+        events=(),
+        raise_on_sync=RuntimeError("sync failed"),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(fake_external),
+    )
+
+    runtime = app_main.build_application_runtime(config=config)
+
+    with pytest.raises(RuntimeError, match="sync failed"):
+        runtime.start()
+
+    assert runtime.trading_process.risk_manager is not None
+    assert runtime.trading_process.risk_manager.state.kill_switch_active is True
+    assert (
+        runtime.trading_process.risk_manager.state.trading_halt_reason
+        == TradingHaltReason.ORDER_SYNC_FAILED
+    )
+    assert runtime.trading_process.risk_manager.state.requires_manual_resume is True
 
 
 def test_runtime_starts_without_snapshot_when_snapshot_is_missing(
@@ -2041,7 +2075,12 @@ def _runtime_config(
         config.strategy,
         trend=replace(config.strategy.trend, short_window=1, long_window=2),
     )
-    return replace(config, app=app, strategy=strategy)
+    risk = replace(
+        config.risk,
+        trading_start_time="00:00",
+        trading_end_time="23:59",
+    )
+    return replace(config, app=app, strategy=strategy, risk=risk)
 
 
 def _market_data_event(price: float) -> BaseEvent[Any]:
