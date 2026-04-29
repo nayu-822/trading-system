@@ -1,15 +1,18 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, time
 from uuid import uuid4
 
 from domain.enums import (
+    DataSourceMode,
     EventSource,
     EventType,
+    KabuApiEnvironment,
     OrderSide,
     OrderStatus,
     SignalType,
+    TradingMode,
 )
 from domain.events import (
     BaseEvent,
@@ -29,6 +32,7 @@ from domain.models import (
     RiskSymbolConfig,
     TradeHistory,
     TradeResult,
+    TradingProcessConfig,
     TradingSymbolConfig,
     TradingSymbolState,
 )
@@ -66,17 +70,29 @@ TERMINAL_ORDER_STATUSES = {
 }
 
 
+@dataclass(frozen=True)
+class OrderRequestDecision:
+    """SignalDetected 縺九ｉ OrderRequested 繧定｡後∴繧九°縺ｮ蛻､螳壹・邨先棡縲・"""
+
+    allowed: bool
+    reason: str
+    side: OrderSide | None = None
+    quantity: int = 0
+    is_exit: bool = False
+
+
 @dataclass
 class TradingProcess:
     """シグナルから発注可否と売買状態を管理する。"""
 
     event_bus: EventBus
-    order_quantity: int = 100
-    order_type: str = "MARKET"
+    order_quantity: int = 1
+    order_type: str = ""
     lot_configs: tuple[TradingSymbolConfig, ...] = ()
     auto_fill_orders: bool = True
     order_gateway: OrderGateway | None = None
     risk_manager: RiskManager | None = None
+    process_config: TradingProcessConfig | None = None
     event_factory: EventFactory = field(
         default_factory=lambda: EventFactory(source=EventSource.TRADING)
     )
@@ -85,6 +101,9 @@ class TradingProcess:
     latest_prices: list[tuple[str, float]] = field(default_factory=list)
     order_status_syncer: Callable[[], int] | None = None
     position_reconciliation_handler: Callable[[str], None] | None = None
+    current_time_provider: Callable[[], datetime] = field(
+        default_factory=lambda: _current_local_datetime
+    )
     order_fill_reconciler: OrderFillReconciler = field(
         default_factory=OrderFillReconciler
     )
@@ -98,6 +117,15 @@ class TradingProcess:
                 lot_configs=self.lot_configs,
                 order_quantity=self.order_quantity,
             )
+        if self.process_config is None:
+            self.process_config = _default_trading_process_config(
+                lot_configs=self.lot_configs,
+                order_quantity=self.order_quantity,
+                order_type=self.order_type,
+                risk_manager=self.risk_manager,
+            )
+        if not self.order_type:
+            self.order_type = self.process_config.order_type
 
     def start(self) -> None:
         """SignalDetected と OrderStatusUpdated の購読を開始する。"""
@@ -140,78 +168,35 @@ class TradingProcess:
         if not isinstance(event, SignalDetected):
             return
         if event.symbol is None:
-            self.logger.warning("signal ignored because symbol is empty")
-            return
-        if (
-            self.risk_manager is not None
-            and self.risk_manager.state.kill_switch_active
-        ):
-            self.logger.warning(
-                "signal ignored because trading is halted symbol=%s reason=%s",
-                event.symbol,
-                (
-                    self.risk_manager.state.trading_halt_reason.value
-                    if self.risk_manager.state.trading_halt_reason is not None
-                    else "kill_switch"
-                ),
+            self._log_signal_rejected(
+                symbol=None,
+                signal_type=None,
+                reason="symbol is empty",
             )
             return
 
         self._set_latest_price_from_signal(event)
         state = self.get_state(event.symbol)
-        if self._has_open_order(state):
-            self.logger.warning(
-                "signal ignored because open order exists symbol=%s", event.symbol
-            )
-            return
-
-        order_side = self._resolve_order_side(
-            signal_type=event.payload.signal_type,
-            position=self._ensure_position(state),
-        )
-        if order_side is None:
-            self.logger.info(
-                "signal ignored signal_type=%s symbol=%s",
-                event.payload.signal_type.value,
-                event.symbol,
-            )
-            return
-        if self._has_same_direction_position(
-            position=self._ensure_position(state),
-            side=order_side,
-            signal_type=event.payload.signal_type,
-        ):
-            self.logger.info(
-                "signal ignored because same direction position exists symbol=%s",
-                event.symbol,
-            )
-            return
-
-        position = self._ensure_position(state)
-        quantity = self._resolve_order_quantity(
-            signal_type=event.payload.signal_type,
-            position=position,
-            lot_size=state.lot_size,
-            symbol=event.symbol,
-            side=order_side,
-        )
-        if quantity <= 0:
-            self.logger.warning(
-                "signal ignored because calculated lot is zero symbol=%s",
-                event.symbol,
+        decision = self._evaluate_order_request(event=event, state=state)
+        if not decision.allowed or decision.side is None:
+            self._log_signal_rejected(
+                symbol=event.symbol,
+                signal_type=event.payload.signal_type,
+                reason=decision.reason,
             )
             return
         order = Order(
             order_id=str(uuid4()),
             symbol=event.symbol,
-            side=order_side,
-            quantity=quantity,
+            side=decision.side,
+            quantity=decision.quantity,
             order_type=self.order_type,
-            is_exit=event.payload.signal_type == SignalType.EXIT,
+            is_exit=decision.is_exit,
             status=OrderStatus.REQUESTED,
             price=self._reference_price(event.symbol),
-            remaining_quantity=quantity,
+            remaining_quantity=decision.quantity,
         )
+        state.is_busy = True
         state.orders.append(order)
         order_event = self.event_factory.create(
             event_type=EventType.ORDER_REQUESTED,
@@ -329,6 +314,7 @@ class TradingProcess:
         )
         if order.status in TERMINAL_ORDER_STATUSES:
             self._remove_order(state=state, order=order)
+        state.is_busy = self._has_open_order(state)
         self._reconcile_position_after_order_status(order.symbol)
 
     def apply_order_status_events(self, events: tuple[OrderStatusUpdated, ...]) -> None:
@@ -471,6 +457,8 @@ class TradingProcess:
             )
             for symbol_state in snapshot.symbols
         ]
+        for state in self.states:
+            state.is_busy = self._has_open_order(state)
         if snapshot.risk_state is not None and self.risk_manager is not None:
             self.risk_manager.restore_state(
                 RiskControlState(
@@ -573,6 +561,162 @@ class TradingProcess:
         }
         return any(order.status in incomplete_statuses for order in state.orders)
 
+    def _evaluate_order_request(
+        self,
+        event: SignalDetected,
+        state: TradingSymbolState,
+    ) -> OrderRequestDecision:
+        """SignalDetected から安全な発注可否を判定する。"""
+
+        position = self._ensure_position(state)
+        if not self._is_symbol_allowed(event.symbol):
+            return OrderRequestDecision(False, "symbol is not in trade_symbols")
+        configuration_reason = self._configuration_rejection_reason()
+        if configuration_reason is not None:
+            return OrderRequestDecision(False, configuration_reason)
+        if self._is_trading_halted():
+            return OrderRequestDecision(False, self._trading_halt_reason())
+        if self._has_open_order(state):
+            return OrderRequestDecision(False, "incomplete order exists")
+        if state.is_busy:
+            return OrderRequestDecision(False, "symbol is busy")
+
+        order_side = self._resolve_order_side(
+            signal_type=event.payload.signal_type,
+            position=position,
+        )
+        if order_side is None:
+            return OrderRequestDecision(False, "sellable position does not exist")
+        if self._has_same_direction_position(
+            position=position,
+            side=order_side,
+            signal_type=event.payload.signal_type,
+        ):
+            return OrderRequestDecision(False, "same direction position exists")
+        if not self._is_market_open():
+            return OrderRequestDecision(False, "market is closed")
+        if event.payload.signal_type == SignalType.SELL and position.quantity <= 0:
+            return OrderRequestDecision(False, "sellable position does not exist")
+        if event.payload.signal_type != SignalType.EXIT and not self._can_enter(
+            symbol=event.symbol,
+            side=order_side,
+        ):
+            return OrderRequestDecision(False, "entry rejected by risk manager")
+
+        quantity = self._resolve_order_quantity(
+            signal_type=event.payload.signal_type,
+            position=position,
+            lot_size=state.lot_size,
+            symbol=event.symbol,
+            side=order_side,
+        )
+        if quantity <= 0:
+            return OrderRequestDecision(False, "quantity is not positive")
+        if quantity > self.process_config.max_order_quantity:
+            return OrderRequestDecision(False, "quantity exceeds max_order_quantity")
+        return OrderRequestDecision(
+            True,
+            "ok",
+            side=order_side,
+            quantity=quantity,
+            is_exit=event.payload.signal_type == SignalType.EXIT,
+        )
+
+    def _is_symbol_allowed(self, symbol: str | None) -> bool:
+        """発注対象銘柄が許可リストに含まれるかを返す。"""
+
+        if symbol is None or self.process_config is None:
+            return False
+        return symbol in self.process_config.trade_symbols
+
+    def _configuration_rejection_reason(self) -> str | None:
+        """発注設定に問題がある場合は拒否理由を返す。"""
+
+        if self.process_config is None:
+            return "trading configuration is missing"
+        if self.process_config.max_order_quantity < 1:
+            return "max_order_quantity is invalid"
+        if self.process_config.order_type.upper() != "MARKET":
+            return "unsupported order_type"
+        if self.process_config.trading_mode == TradingMode.PAPER:
+            if self.process_config.live_enabled:
+                return "paper mode requires live_enabled=false"
+            return None
+        if self.process_config.trading_mode != TradingMode.LIVE:
+            return "unsupported trading_mode"
+        if not self.process_config.live_enabled:
+            return "live mode requires live_enabled=true"
+        if self.process_config.data_source_mode != DataSourceMode.API:
+            return "live mode requires api data_source_mode"
+        if self.process_config.kabu_api_environment not in (
+            KabuApiEnvironment.PAPER,
+            KabuApiEnvironment.LIVE,
+        ):
+            return "unsupported kabu_api_environment"
+        return None
+
+    def _is_trading_halted(self) -> bool:
+        """リスク停止中かどうかを返す。"""
+
+        return bool(
+            self.risk_manager is not None and self.risk_manager.state.kill_switch_active
+        )
+
+    def _trading_halt_reason(self) -> str:
+        """停止中ログに使う理由文字列を返す。"""
+
+        if self.risk_manager is None:
+            return "trading is halted"
+        if self.risk_manager.state.trading_halt_reason is None:
+            return "trading is halted"
+        return f"trading is halted reason={self.risk_manager.state.trading_halt_reason.value}"
+
+    def _is_market_open(self) -> bool:
+        """設定された市場時間内かどうかを返す。"""
+
+        if self.process_config is None:
+            return False
+        try:
+            start_time = time.fromisoformat(self.process_config.trading_start_time)
+            end_time = time.fromisoformat(self.process_config.trading_end_time)
+        except ValueError:
+            return False
+        current_time = (
+            self.current_time_provider()
+            .time()
+            .replace(
+                second=0,
+                microsecond=0,
+            )
+        )
+        return start_time <= current_time <= end_time
+
+    def _can_enter(self, symbol: str, side: OrderSide) -> bool:
+        """新規エントリー可能かを RiskManager で判定する。"""
+
+        if self.risk_manager is None:
+            return True
+        return self.risk_manager.can_enter(
+            symbol=symbol,
+            side=side,
+            current_state=tuple(self.states),
+        )
+
+    def _log_signal_rejected(
+        self,
+        symbol: str | None,
+        signal_type: SignalType | None,
+        reason: str,
+    ) -> None:
+        """発注しなかった理由を安全にログ出力する。"""
+
+        self.logger.warning(
+            "signal ignored symbol=%s signal_type=%s reason=%s",
+            symbol,
+            signal_type.value if signal_type is not None else None,
+            reason,
+        )
+
     def _resolve_order_side(
         self,
         signal_type: SignalType,
@@ -612,12 +756,6 @@ class TradingProcess:
             return abs(position.quantity)
         if self.risk_manager is None:
             return lot_size
-        if not self.risk_manager.can_enter(
-            symbol=symbol,
-            side=side,
-            current_state=tuple(self.states),
-        ):
-            return 0
         return self.risk_manager.calculate_lot(
             symbol=symbol,
             account_state=AccountState(
@@ -718,7 +856,7 @@ class TradingProcess:
             symbol=event.symbol,
             side=event.payload.side,
             quantity=event.payload.order_quantity,
-            order_type="MARKET",
+            order_type=self.order_type,
             is_exit=event.payload.is_exit,
             status=OrderStatus.REQUESTED,
             filled_quantity=0,
@@ -726,6 +864,7 @@ class TradingProcess:
             avg_price=None,
         )
         state.orders.append(order)
+        state.is_busy = True
         self.logger.info(
             "order restored from api order_id=%s symbol=%s side=%s quantity=%s status=%s",
             order.order_id,
@@ -884,3 +1023,42 @@ def _default_risk_manager(
             ),
         ),
     )
+
+
+def _default_trading_process_config(
+    lot_configs: tuple[TradingSymbolConfig, ...],
+    order_quantity: int,
+    order_type: str,
+    risk_manager: RiskManager | None,
+) -> TradingProcessConfig:
+    """TradingProcess 単体利用時の安全側デフォルト設定を組み立てる。"""
+
+    trade_symbols = tuple(lot_config.symbol for lot_config in lot_configs) or ("7203",)
+    trading_start_time = "00:00"
+    trading_end_time = "23:59"
+    if risk_manager is not None:
+        trading_start_time = risk_manager.config.trading_start_time
+        trading_end_time = risk_manager.config.trading_end_time
+    return TradingProcessConfig(
+        trading_mode=TradingMode.PAPER,
+        live_enabled=False,
+        data_source_mode=DataSourceMode.CSV,
+        kabu_api_environment=KabuApiEnvironment.PAPER,
+        trade_symbols=trade_symbols,
+        max_order_quantity=max(
+            max(
+                (lot_config.lot_size for lot_config in lot_configs),
+                default=order_quantity,
+            ),
+            1,
+        ),
+        order_type=(order_type or "MARKET").upper(),
+        trading_start_time=trading_start_time,
+        trading_end_time=trading_end_time,
+    )
+
+
+def _current_local_datetime() -> datetime:
+    """ローカルタイムゾーンの現在時刻を返す。"""
+
+    return datetime.now().astimezone()

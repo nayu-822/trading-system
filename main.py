@@ -1,6 +1,6 @@
+import json
 import logging
 import os
-import json
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -33,10 +33,11 @@ from domain.models import (
     SignalStrategyConfig,
     SystemConfig,
     TradingHaltState,
+    TradingProcessConfig,
     TradingSymbolConfig,
 )
-from infrastructure.clock import RealClock
 from infrastructure.cli import api_order_precheck as api_order_precheck_cli
+from infrastructure.clock import RealClock
 from infrastructure.config_loader import ConfigLoadError, load_config
 from infrastructure.config_validator import ConfigValidationError, validate_config
 from infrastructure.event_bus import EventBus
@@ -252,7 +253,9 @@ class ApplicationRuntime:
 
         risk_manager = self.trading_process.risk_manager
         if risk_manager is None:
-            self.logger.warning("trading halt action=resume_failed reason=unknown message=risk_manager is empty")
+            self.logger.warning(
+                "trading halt action=resume_failed reason=unknown message=risk_manager is empty"
+            )
             return False
         if not risk_manager.state.kill_switch_active:
             risk_manager.resume_trading("resume requested while not halted")
@@ -263,9 +266,11 @@ class ApplicationRuntime:
         ):
             self.logger.warning(
                 "trading halt action=resume_failed reason=%s message=%s halted_at=%s resolved_at=%s requires_manual_resume=%s",
-                risk_manager.state.trading_halt_reason.value
-                if risk_manager.state.trading_halt_reason is not None
-                else TradingHaltReason.UNKNOWN_ERROR.value,
+                (
+                    risk_manager.state.trading_halt_reason.value
+                    if risk_manager.state.trading_halt_reason is not None
+                    else TradingHaltReason.UNKNOWN_ERROR.value
+                ),
                 "api resume checks are unavailable",
                 risk_manager.state.trading_halt_halted_at,
                 risk_manager.state.trading_halt_resolved_at,
@@ -289,7 +294,9 @@ class ApplicationRuntime:
             enabled_symbols = tuple(
                 symbol.code for symbol in self.config.symbols if symbol.enabled
             )
-            if self.reconcile_positions(symbols=enabled_symbols) != len(enabled_symbols):
+            if self.reconcile_positions(symbols=enabled_symbols) != len(
+                enabled_symbols
+            ):
                 self._log_resume_failed()
                 return False
             risk_manager.resume_trading("manual resume completed")
@@ -347,7 +354,9 @@ class ApplicationRuntime:
             return False
         return self._open_orders_match_repository(
             order_status_repository=rest_poller.order_status_repository,
-            symbols=tuple(symbol.code for symbol in self.config.symbols if symbol.enabled),
+            symbols=tuple(
+                symbol.code for symbol in self.config.symbols if symbol.enabled
+            ),
         )
 
     def _open_orders_match_repository(
@@ -385,7 +394,9 @@ class ApplicationRuntime:
                 return False
         return True
 
-    def _order_identity(self, order: Order) -> tuple[str, str, str, int, str, int, int, bool]:
+    def _order_identity(
+        self, order: Order
+    ) -> tuple[str, str, str, int, str, int, int, bool]:
         """未完了注文比較用の識別子を返す。"""
 
         return (
@@ -407,9 +418,11 @@ class ApplicationRuntime:
             return
         self.logger.warning(
             "trading halt action=halt reason=%s message=%s halted_at=%s resolved_at=%s requires_manual_resume=%s",
-            risk_manager.state.trading_halt_reason.value
-            if risk_manager.state.trading_halt_reason is not None
-            else "",
+            (
+                risk_manager.state.trading_halt_reason.value
+                if risk_manager.state.trading_halt_reason is not None
+                else ""
+            ),
             risk_manager.state.trading_halt_message,
             risk_manager.state.trading_halt_halted_at,
             risk_manager.state.trading_halt_resolved_at,
@@ -424,9 +437,11 @@ class ApplicationRuntime:
             return
         self.logger.warning(
             "trading halt action=resume_failed reason=%s message=%s halted_at=%s resolved_at=%s requires_manual_resume=%s",
-            risk_manager.state.trading_halt_reason.value
-            if risk_manager.state.trading_halt_reason is not None
-            else "",
+            (
+                risk_manager.state.trading_halt_reason.value
+                if risk_manager.state.trading_halt_reason is not None
+                else ""
+            ),
             risk_manager.state.trading_halt_message,
             risk_manager.state.trading_halt_halted_at,
             risk_manager.state.trading_halt_resolved_at,
@@ -480,9 +495,14 @@ class ApplicationRuntime:
         errors: list[str] = []
         rest_poller = getattr(self.external_data_process, "rest_poller", None)
         order_sync_ok = False
-        if self.config.app.data_source_mode != DataSourceMode.API or rest_poller is None:
+        if (
+            self.config.app.data_source_mode != DataSourceMode.API
+            or rest_poller is None
+        ):
             message = "api order sync is unavailable"
-            checks.append({"name": "order_status_sync", "ok": False, "message": message})
+            checks.append(
+                {"name": "order_status_sync", "ok": False, "message": message}
+            )
             errors.append(message)
         else:
             try:
@@ -503,7 +523,11 @@ class ApplicationRuntime:
             {
                 "name": "open_orders_match",
                 "ok": open_orders_ok,
-                "message": "ok" if open_orders_ok else "open orders are not synchronized with api",
+                "message": (
+                    "ok"
+                    if open_orders_ok
+                    else "open orders are not synchronized with api"
+                ),
             }
         )
         if not open_orders_ok:
@@ -524,11 +548,15 @@ class ApplicationRuntime:
             )
             errors.append("position reconciliation is unavailable")
         else:
-            for symbol in (symbol.code for symbol in self.config.symbols if symbol.enabled):
+            for symbol in (
+                symbol.code for symbol in self.config.symbols if symbol.enabled
+            ):
                 try:
                     self.position_reconciliation_service.reconcile(
                         symbol=symbol,
-                        internal_position=self.trading_process.get_state(symbol).position,
+                        internal_position=self.trading_process.get_state(
+                            symbol
+                        ).position,
                     )
                 except Exception as error:
                     positions_ok = False
@@ -616,7 +644,9 @@ class ApplicationRuntime:
             payload=payload,
             name="environment_is_paper",
             ok=is_paper_environment,
-            message="ok" if is_paper_environment else "kabu_api_environment must be paper",
+            message=(
+                "ok" if is_paper_environment else "kabu_api_environment must be paper"
+            ),
         )
         token_env_name_is_paper = (
             self.config.app.kabu_api.token_env_name == "KABU_API_PASSWORD_PAPER"
@@ -670,7 +700,9 @@ class ApplicationRuntime:
             payload=payload,
             name="base_url_is_paper_port",
             ok=is_paper_port,
-            message="ok" if is_paper_port else "base_url must point to paper port 18081",
+            message=(
+                "ok" if is_paper_port else "base_url must point to paper port 18081"
+            ),
         )
         symbol_allowed = symbol in self.config.app.trade_symbols
         self._append_check(
@@ -705,8 +737,8 @@ class ApplicationRuntime:
             ),
         )
         safe_quantity = self._resolve_api_order_precheck_safe_quantity(symbol)
-        quantity_is_safe_for_symbol = (
-            safe_quantity is None or (quantity > 0 and quantity <= safe_quantity)
+        quantity_is_safe_for_symbol = safe_quantity is None or (
+            quantity > 0 and quantity <= safe_quantity
         )
         self._append_check(
             payload=payload,
@@ -1049,7 +1081,9 @@ class ApplicationRuntime:
                     synced_order=synced_order,
                 )
             )
-            payload["order_id"] = synced_order.external_order_id or synced_order.order_id
+            payload["order_id"] = (
+                synced_order.external_order_id or synced_order.order_id
+            )
             payload["order_status"] = synced_order.status.value
             payload["filled_quantity"] = synced_order.filled_quantity
             payload["remaining_quantity"] = synced_order.remaining_quantity
@@ -1195,34 +1229,34 @@ class ApplicationRuntime:
 
         return _attach_command_record_context(
             {
-            "ok": False,
-            "command": "api-order-dry-run",
-            "symbol": symbol,
-            "side": side.value,
-            "quantity": quantity,
-            "order_id": "",
-            "order_status": "",
-            "filled_quantity": 0,
-            "remaining_quantity": quantity,
-            "position_quantity": 0,
-            "position_side": "NONE",
-            "reconciliation_result": "UNKNOWN",
-            "position": {
+                "ok": False,
+                "command": "api-order-dry-run",
                 "symbol": symbol,
-                "quantity": 0,
-                "average_price": 0.0,
-            },
-            "trading_mode": self.config.app.trading_mode.value,
-            "kabu_api_environment": self.config.app.kabu_api.environment.value,
-            "base_url": self.config.app.kabu_api.base_url,
-            "is_halted": False,
-            "reason": "",
-            "halt_reason": "",
-            "message": "",
-            "next_action": [],
-            "log_hint": [],
-            "checks": [],
-            "errors": [],
+                "side": side.value,
+                "quantity": quantity,
+                "order_id": "",
+                "order_status": "",
+                "filled_quantity": 0,
+                "remaining_quantity": quantity,
+                "position_quantity": 0,
+                "position_side": "NONE",
+                "reconciliation_result": "UNKNOWN",
+                "position": {
+                    "symbol": symbol,
+                    "quantity": 0,
+                    "average_price": 0.0,
+                },
+                "trading_mode": self.config.app.trading_mode.value,
+                "kabu_api_environment": self.config.app.kabu_api.environment.value,
+                "base_url": self.config.app.kabu_api.base_url,
+                "is_halted": False,
+                "reason": "",
+                "halt_reason": "",
+                "message": "",
+                "next_action": [],
+                "log_hint": [],
+                "checks": [],
+                "errors": [],
             },
             config=self.config,
         )
@@ -1258,6 +1292,7 @@ class ApplicationRuntime:
             "ok" if payload["ok"] else "ng",
             payload["errors"][0] if payload["errors"] else "",
         )
+
 
 def initialize_application(
     config_dir: Path = CONFIG_DIR,
@@ -1349,6 +1384,18 @@ def build_application_runtime(
             if symbol.enabled
         ),
         risk_manager=_build_risk_manager(config=config),
+        process_config=TradingProcessConfig(
+            trading_mode=config.app.trading_mode,
+            live_enabled=config.app.live_enabled,
+            data_source_mode=config.app.data_source_mode,
+            kabu_api_environment=config.app.kabu_api.environment,
+            trade_symbols=_resolve_enabled_trade_symbols(config),
+            max_order_quantity=config.app.max_order_quantity,
+            order_type=config.app.default_order_type,
+            trading_start_time=config.risk.trading_start_time,
+            trading_end_time=config.risk.trading_end_time,
+        ),
+        order_type=config.app.default_order_type,
     )
     external_data_process = _build_external_data_process(
         event_bus=event_bus,
@@ -1403,9 +1450,7 @@ def build_application_runtime(
     )
     rest_poller = getattr(external_data_process, "rest_poller", None)
     if rest_poller is not None:
-        rest_poller.on_cycle_completed = (
-            lambda: runtime.reconcile_positions()
-        )
+        rest_poller.on_cycle_completed = lambda: runtime.reconcile_positions()
     return runtime
 
 
@@ -1769,7 +1814,9 @@ def _resolve_api_order_precheck_safe_quantity_from_config(
         int | None: 推奨検証数量。未設定時は None。
     """
 
-    return _resolve_api_order_precheck_lot_unit_from_config(config=config, symbol=symbol)
+    return _resolve_api_order_precheck_lot_unit_from_config(
+        config=config, symbol=symbol
+    )
 
 
 def _parse_cli_config_path(arguments: list[str]) -> tuple[Path, list[str]]:
@@ -1948,9 +1995,7 @@ def _run_operational_command(
                 halt_state=snapshot_store.load_halt_state(),
                 symbol=_parse_option(arguments, "--symbol") or "",
                 side=(_parse_option(arguments, "--side") or "").upper(),
-                quantity=_parse_api_order_dry_run_quantity_for_error_payload(
-                    arguments
-                ),
+                quantity=_parse_api_order_dry_run_quantity_for_error_payload(arguments),
             )
         elif command == "api-order-precheck":
             payload = _api_order_precheck_error_payload(
@@ -1960,9 +2005,7 @@ def _run_operational_command(
                 halt_state=snapshot_store.load_halt_state(),
                 symbol=_parse_option(arguments, "--symbol") or "",
                 side=(_parse_option(arguments, "--side") or "BUY").upper(),
-                quantity=_parse_api_order_dry_run_quantity_for_error_payload(
-                    arguments
-                ),
+                quantity=_parse_api_order_dry_run_quantity_for_error_payload(arguments),
             )
         else:
             payload = _error_payload(
@@ -1977,7 +2020,11 @@ def _run_operational_command(
             result="ng",
             reason=payload["reason"],
             message=payload["message"],
-            payload=payload if command in {"api-order-precheck", "api-order-dry-run"} else None,
+            payload=(
+                payload
+                if command in {"api-order-precheck", "api-order-dry-run"}
+                else None
+            ),
         )
         _write_cli_output(payload, json_output=json_output)
         return 1
@@ -1998,9 +2045,7 @@ def _run_operational_command(
                 halt_state=runtime.get_trading_halt_state(),
                 symbol=_parse_option(arguments, "--symbol") or "",
                 side=(_parse_option(arguments, "--side") or "BUY").upper(),
-                quantity=_parse_api_order_dry_run_quantity_for_error_payload(
-                    arguments
-                ),
+                quantity=_parse_api_order_dry_run_quantity_for_error_payload(arguments),
             )
         save_ok = True
         _attach_command_record_context(payload, config, config_path=config_path)
@@ -2033,9 +2078,7 @@ def _run_operational_command(
                 halt_state=runtime.get_trading_halt_state(),
                 symbol=_parse_option(arguments, "--symbol") or "",
                 side=(_parse_option(arguments, "--side") or "").upper(),
-                quantity=_parse_api_order_dry_run_quantity_for_error_payload(
-                    arguments
-                ),
+                quantity=_parse_api_order_dry_run_quantity_for_error_payload(arguments),
             )
         save_ok = True
         _attach_command_record_context(payload, config, config_path=config_path)
@@ -2248,10 +2291,14 @@ def _api_order_dry_run_error_payload(
         "base_url": config.app.kabu_api.base_url,
         "is_halted": halt_state.is_halted if halt_state is not None else False,
         "reason": (
-            halt_state.reason.value if halt_state is not None and halt_state.reason else ""
+            halt_state.reason.value
+            if halt_state is not None and halt_state.reason
+            else ""
         ),
         "halt_reason": (
-            halt_state.reason.value if halt_state is not None and halt_state.reason else ""
+            halt_state.reason.value
+            if halt_state is not None and halt_state.reason
+            else ""
         ),
         "message": message,
         "next_action": [],
@@ -2465,11 +2512,7 @@ def _sanitize_executed_at_for_result_filename(executed_at: str) -> str:
         if timezone_offset_index >= 0:
             normalized = normalized[: time_separator_index + 1 + timezone_offset_index]
     normalized = normalized.replace("Z", "")
-    return (
-        normalized.replace("-", "")
-        .replace(":", "")
-        .replace(".", "")
-    )
+    return normalized.replace("-", "").replace(":", "").replace(".", "")
 
 
 def _sanitize_result_filename_component(value: str) -> str:
@@ -2770,8 +2813,8 @@ def _build_api_order_precheck_config_only_payload(
         config=config,
         symbol=symbol,
     )
-    quantity_is_safe_for_symbol = (
-        safe_quantity is None or (quantity > 0 and quantity <= safe_quantity)
+    quantity_is_safe_for_symbol = safe_quantity is None or (
+        quantity > 0 and quantity <= safe_quantity
     )
     _append_api_order_precheck_check(
         payload=payload,
@@ -2835,7 +2878,8 @@ def _resolve_reconciliation_result(payload: dict[str, Any]) -> str:
     target_checks = [
         check
         for check in payload.get("checks", [])
-        if check["name"] in {"position_reconciliation", "preflight_position_reconciliation"}
+        if check["name"]
+        in {"position_reconciliation", "preflight_position_reconciliation"}
     ]
     if not target_checks:
         return payload.get("reconciliation_result", "UNKNOWN")
@@ -2852,7 +2896,10 @@ def _resolve_api_order_dry_run_next_action(payload: dict[str, Any]) -> list[str]
     reconciliation_result = str(payload.get("reconciliation_result", "UNKNOWN")).upper()
 
     if payload.get("ok"):
-        if order_status in {"NEW", "REQUESTED", "PARTIALLY_FILLED"} or remaining_quantity > 0:
+        if (
+            order_status in {"NEW", "REQUESTED", "PARTIALLY_FILLED"}
+            or remaining_quantity > 0
+        ):
             return [
                 "時間を置いて注文状態同期を確認してください",
                 "未完了注文が残っているため、同一銘柄の再実行は避けてください",
@@ -2890,9 +2937,7 @@ def _resolve_api_order_dry_run_log_hint(payload: dict[str, Any]) -> list[str]:
         "command=api-order-dry-run で検索してください",
     ]
     if payload.get("order_id"):
-        hints.append(
-            f"order_id={payload['order_id']} で検索してください"
-        )
+        hints.append(f"order_id={payload['order_id']} で検索してください")
     return hints
 
 
@@ -3027,10 +3072,7 @@ def _resolve_config_summary_warnings(
         )
     if config.app.trading_mode == TradingMode.LIVE and not config.app.live_enabled:
         warnings.append("trading_mode=live ですが live_enabled=false です")
-    if (
-        config.app.data_source_mode == DataSourceMode.API
-        and not token_env_exists
-    ):
+    if config.app.data_source_mode == DataSourceMode.API and not token_env_exists:
         warnings.append("API利用設定ですがAPIパスワード環境変数が未設定です")
     if (
         config.app.kabu_api.environment == KabuApiEnvironment.PAPER
@@ -3119,7 +3161,9 @@ def _config_summary_payload(
         "max_order_quantity": config.app.max_order_quantity,
         "position_reconciliation_enabled": config.app.position_reconciliation_enabled,
         "position_average_price_tolerance": config.app.position_average_price_tolerance,
-        "resolved_api_port": _resolve_config_summary_api_port(config.app.kabu_api.base_url),
+        "resolved_api_port": _resolve_config_summary_api_port(
+            config.app.kabu_api.base_url
+        ),
         "resolved_environment_label": resolved_environment_label,
         "order_gateway_label": _resolve_config_summary_order_gateway_label(config),
         "warnings": warnings,
@@ -3172,9 +3216,7 @@ def _paper_runbook_payload() -> dict[str, Any]:
                 "step": 3,
                 "title": "注文フローの確認",
                 "command": "python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1",
-                "purpose": [
-                    "検証API 18081 に対して1回だけ注文フローを確認する"
-                ],
+                "purpose": ["検証API 18081 に対して1回だけ注文フローを確認する"],
                 "requires_api": True,
                 "calls_order_api": True,
                 "can_save_result": True,
@@ -3282,9 +3324,7 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
         sys.stdout.write(f"trading_mode: {payload['trading_mode']}\n")
         sys.stdout.write(f"live_enabled: {payload['live_enabled']}\n")
         sys.stdout.write(f"data_source_mode: {payload['data_source_mode']}\n")
-        sys.stdout.write(
-            f"kabu_api_environment: {payload['kabu_api_environment']}\n"
-        )
+        sys.stdout.write(f"kabu_api_environment: {payload['kabu_api_environment']}\n")
         sys.stdout.write(f"kabu_api_base_url: {payload['kabu_api_base_url']}\n")
         sys.stdout.write(f"kabu_push_url: {payload['kabu_push_url']}\n")
         sys.stdout.write(f"token_env_name: {payload['token_env_name']}\n")
@@ -3373,9 +3413,7 @@ def _write_cli_output(payload: dict[str, Any], json_output: bool) -> None:
         sys.stdout.write(f"remaining_quantity: {payload['remaining_quantity']}\n")
         sys.stdout.write(f"position_quantity: {payload['position_quantity']}\n")
         sys.stdout.write(f"position_side: {payload['position_side']}\n")
-        sys.stdout.write(
-            f"reconciliation_result: {payload['reconciliation_result']}\n"
-        )
+        sys.stdout.write(f"reconciliation_result: {payload['reconciliation_result']}\n")
         sys.stdout.write(f"is_halted: {payload['is_halted']}\n")
         sys.stdout.write(f"halt_reason: {payload['halt_reason']}\n")
         if payload.get("checks"):

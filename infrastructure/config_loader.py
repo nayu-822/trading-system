@@ -197,7 +197,9 @@ def _build_app_config(data: dict[str, Any]) -> AppConfig:
         data.get("kabu_api_environment"),
         trading_mode=trading_mode,
     )
-    base_url = str(data.get("kabu_api_base_url") or _build_kabu_api_base_url(environment))
+    base_url = str(
+        data.get("kabu_api_base_url") or _build_kabu_api_base_url(environment)
+    )
     push_url = str(data.get("kabu_push_url") or _build_kabu_push_url(environment))
 
     return AppConfig(
@@ -208,6 +210,7 @@ def _build_app_config(data: dict[str, Any]) -> AppConfig:
         log_level=str(data["log_level"]).upper(),
         rest_poll_interval_sec=int(data["rest_poll_interval_sec"]),
         push_enabled=bool(data["push_enabled"]),
+        default_order_type=str(data.get("default_order_type", "MARKET")).upper(),
         max_order_quantity=int(data.get("max_order_quantity", 1)),
         trade_symbols=tuple(str(symbol) for symbol in data.get("trade_symbols", [])),
         position_reconciliation_enabled=bool(

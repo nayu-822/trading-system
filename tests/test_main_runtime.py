@@ -416,7 +416,9 @@ def test_runtime_stop_flushes_before_workers_stop(monkeypatch) -> None:
     ]
 
 
-def test_runtime_reconcile_positions_keeps_trading_when_positions_match(monkeypatch) -> None:
+def test_runtime_reconcile_positions_keeps_trading_when_positions_match(
+    monkeypatch,
+) -> None:
     snapshot_dir = _test_dir("position_match")
     config = _runtime_config(
         data_source_mode=DataSourceMode.API,
@@ -499,7 +501,9 @@ def test_runtime_persists_and_restores_halt_state(monkeypatch) -> None:
     restored_runtime.stop()
 
     assert restored_runtime.trading_process.risk_manager is not None
-    assert restored_runtime.trading_process.risk_manager.state.kill_switch_active is True
+    assert (
+        restored_runtime.trading_process.risk_manager.state.kill_switch_active is True
+    )
     assert (
         restored_runtime.trading_process.risk_manager.state.trading_halt_reason
         == TradingHaltReason.POSITION_MISMATCH
@@ -738,14 +742,18 @@ def test_runtime_api_order_dry_run_allows_paper_environment_only(monkeypatch) ->
         resource_options={"use_real_validator": True},
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_dry_run(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert payload["ok"] is True
     assert payload["order_id"] == "api-order-1"
     assert _current_dry_run_resources().allow_api_paper_orders is True
 
 
-def test_runtime_api_order_precheck_returns_ok_for_paper_environment(monkeypatch) -> None:
+def test_runtime_api_order_precheck_returns_ok_for_paper_environment(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_ok",
@@ -768,7 +776,10 @@ def test_runtime_api_order_precheck_returns_ok_for_paper_environment(monkeypatch
     assert payload["executed_at"]
     assert payload["git_commit"]
     assert payload["config_summary"]["token_env_name"] == "KABU_API_PASSWORD_PAPER"
-    assert payload["record_hint"] == "docs/paper_api_test_record_template.md に結果を記録してください"
+    assert (
+        payload["record_hint"]
+        == "docs/paper_api_test_record_template.md に結果を記録してください"
+    )
     assert payload["next_action"] == ["api-order-dry-run を実行できます"]
     assert resources.gateway.place_order_calls == 0
     assert runtime.trading_process.get_state("1321").orders == []
@@ -793,8 +804,14 @@ def test_runtime_api_order_precheck_rejects_live_environment(monkeypatch) -> Non
     )
 
     assert payload["ok"] is False
-    assert any(check["name"] == "environment_is_paper" and not check["ok"] for check in payload["checks"])
-    assert "config/app.yaml の kabu_api_environment を paper にしてください" in payload["next_action"]
+    assert any(
+        check["name"] == "environment_is_paper" and not check["ok"]
+        for check in payload["checks"]
+    )
+    assert (
+        "config/app.yaml の kabu_api_environment を paper にしてください"
+        in payload["next_action"]
+    )
 
 
 def test_runtime_api_order_precheck_rejects_live_port_base_url(monkeypatch) -> None:
@@ -811,7 +828,9 @@ def test_runtime_api_order_precheck_rejects_live_port_base_url(monkeypatch) -> N
         runtime.config,
         app=replace(
             runtime.config.app,
-            kabu_api=replace(runtime.config.app.kabu_api, base_url="http://localhost:18080"),
+            kabu_api=replace(
+                runtime.config.app.kabu_api, base_url="http://localhost:18080"
+            ),
         ),
     )
 
@@ -822,11 +841,19 @@ def test_runtime_api_order_precheck_rejects_live_port_base_url(monkeypatch) -> N
     )
 
     assert payload["ok"] is False
-    assert any(check["name"] == "base_url_is_paper_port" and not check["ok"] for check in payload["checks"])
-    assert "base_url が検証PORT 18081 を向いているか確認してください" in payload["next_action"]
+    assert any(
+        check["name"] == "base_url_is_paper_port" and not check["ok"]
+        for check in payload["checks"]
+    )
+    assert (
+        "base_url が検証PORT 18081 を向いているか確認してください"
+        in payload["next_action"]
+    )
 
 
-def test_runtime_api_order_precheck_rejects_symbol_outside_trade_symbols(monkeypatch) -> None:
+def test_runtime_api_order_precheck_rejects_symbol_outside_trade_symbols(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_symbol_ng",
@@ -844,8 +871,13 @@ def test_runtime_api_order_precheck_rejects_symbol_outside_trade_symbols(monkeyp
     )
 
     assert payload["ok"] is False
-    assert any(check["name"] == "symbol_allowed" and not check["ok"] for check in payload["checks"])
-    assert "config/app.yaml の trade_symbols を確認してください" in payload["next_action"]
+    assert any(
+        check["name"] == "symbol_allowed" and not check["ok"]
+        for check in payload["checks"]
+    )
+    assert (
+        "config/app.yaml の trade_symbols を確認してください" in payload["next_action"]
+    )
 
 
 def test_runtime_api_order_precheck_rejects_zero_quantity(monkeypatch) -> None:
@@ -866,8 +898,14 @@ def test_runtime_api_order_precheck_rejects_zero_quantity(monkeypatch) -> None:
     )
 
     assert payload["ok"] is False
-    assert any(check["name"] == "quantity_valid" and not check["ok"] for check in payload["checks"])
-    assert "数量が 1以上 max_order_quantity 以下か確認してください" in payload["next_action"]
+    assert any(
+        check["name"] == "quantity_valid" and not check["ok"]
+        for check in payload["checks"]
+    )
+    assert (
+        "数量が 1以上 max_order_quantity 以下か確認してください"
+        in payload["next_action"]
+    )
 
 
 def test_runtime_api_order_precheck_rejects_quantity_over_max_order_quantity(
@@ -891,7 +929,10 @@ def test_runtime_api_order_precheck_rejects_quantity_over_max_order_quantity(
     )
 
     assert payload["ok"] is False
-    assert any(check["name"] == "quantity_valid" and not check["ok"] for check in payload["checks"])
+    assert any(
+        check["name"] == "quantity_valid" and not check["ok"]
+        for check in payload["checks"]
+    )
 
 
 def test_runtime_api_order_precheck_rejects_when_halted(monkeypatch) -> None:
@@ -917,11 +958,18 @@ def test_runtime_api_order_precheck_rejects_when_halted(monkeypatch) -> None:
     )
 
     assert payload["ok"] is False
-    assert any(check["name"] == "not_halted" and not check["ok"] for check in payload["checks"])
-    assert "halt-status で停止理由を確認し、必要なら原因調査後に resume してください" in payload["next_action"]
+    assert any(
+        check["name"] == "not_halted" and not check["ok"] for check in payload["checks"]
+    )
+    assert (
+        "halt-status で停止理由を確認し、必要なら原因調査後に resume してください"
+        in payload["next_action"]
+    )
 
 
-def test_runtime_api_order_precheck_rejects_when_position_fetch_fails(monkeypatch) -> None:
+def test_runtime_api_order_precheck_rejects_when_position_fetch_fails(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_position_fetch_ng",
@@ -930,7 +978,9 @@ def test_runtime_api_order_precheck_rejects_when_position_fetch_fails(monkeypatc
         live_enabled=True,
         token_env_name="KABU_API_PASSWORD_PAPER",
         token_env_value="dummy-paper-password",
-        resource_options={"position_fetch_error": RuntimeError("position fetch failed")},
+        resource_options={
+            "position_fetch_error": RuntimeError("position fetch failed")
+        },
     )
 
     payload = runtime.run_api_order_precheck(
@@ -941,12 +991,17 @@ def test_runtime_api_order_precheck_rejects_when_position_fetch_fails(monkeypatc
     resources = _current_dry_run_resources()
 
     assert payload["ok"] is False
-    assert any(check["name"] == "position_fetch" and not check["ok"] for check in payload["checks"])
+    assert any(
+        check["name"] == "position_fetch" and not check["ok"]
+        for check in payload["checks"]
+    )
     assert resources.gateway.place_order_calls == 0
     assert runtime.trading_process.get_state("1321").orders == []
 
 
-def test_runtime_api_order_precheck_rejects_when_order_status_fetch_fails(monkeypatch) -> None:
+def test_runtime_api_order_precheck_rejects_when_order_status_fetch_fails(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_order_status_ng",
@@ -955,7 +1010,9 @@ def test_runtime_api_order_precheck_rejects_when_order_status_fetch_fails(monkey
         live_enabled=True,
         token_env_name="KABU_API_PASSWORD_PAPER",
         token_env_value="dummy-paper-password",
-        resource_options={"order_status_fetch_error": RuntimeError("order status fetch failed")},
+        resource_options={
+            "order_status_fetch_error": RuntimeError("order status fetch failed")
+        },
     )
 
     payload = runtime.run_api_order_precheck(
@@ -965,10 +1022,15 @@ def test_runtime_api_order_precheck_rejects_when_order_status_fetch_fails(monkey
     )
 
     assert payload["ok"] is False
-    assert any(check["name"] == "order_status_fetch" and not check["ok"] for check in payload["checks"])
+    assert any(
+        check["name"] == "order_status_fetch" and not check["ok"]
+        for check in payload["checks"]
+    )
 
 
-def test_runtime_api_order_precheck_returns_api_guidance_when_preflight_fails(monkeypatch) -> None:
+def test_runtime_api_order_precheck_returns_api_guidance_when_preflight_fails(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_preflight_ng",
@@ -987,8 +1049,14 @@ def test_runtime_api_order_precheck_returns_api_guidance_when_preflight_fails(mo
     )
 
     assert payload["ok"] is False
-    assert any(check["name"] == "preflight_check" and not check["ok"] for check in payload["checks"])
-    assert "kabuステーションを検証モードで起動し、API接続を確認してください" in payload["next_action"]
+    assert any(
+        check["name"] == "preflight_check" and not check["ok"]
+        for check in payload["checks"]
+    )
+    assert (
+        "kabuステーションを検証モードで起動し、API接続を確認してください"
+        in payload["next_action"]
+    )
 
 
 def test_runtime_api_order_precheck_accepts_paper_token_env_name(monkeypatch) -> None:
@@ -1002,7 +1070,9 @@ def test_runtime_api_order_precheck_accepts_paper_token_env_name(monkeypatch) ->
         token_env_value="dummy-paper-password",
     )
 
-    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_precheck(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert any(
         check["name"] == "token_env_name_is_paper" and check["ok"]
@@ -1021,7 +1091,9 @@ def test_runtime_api_order_precheck_rejects_live_token_env_name(monkeypatch) -> 
         token_env_value="dummy-live-password",
     )
 
-    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_precheck(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert payload["ok"] is False
     assert any(
@@ -1034,7 +1106,9 @@ def test_runtime_api_order_precheck_rejects_live_token_env_name(monkeypatch) -> 
     )
 
 
-def test_runtime_api_order_precheck_rejects_when_token_env_is_missing(monkeypatch) -> None:
+def test_runtime_api_order_precheck_rejects_when_token_env_is_missing(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_token_env_missing",
@@ -1045,7 +1119,9 @@ def test_runtime_api_order_precheck_rejects_when_token_env_is_missing(monkeypatc
         token_env_value=None,
     )
 
-    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_precheck(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert payload["ok"] is False
     assert any(
@@ -1069,7 +1145,9 @@ def test_runtime_api_order_precheck_accepts_when_token_env_is_set(monkeypatch) -
         token_env_value="dummy-paper-password",
     )
 
-    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_precheck(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert any(
         check["name"] == "token_env_exists" and check["ok"]
@@ -1088,7 +1166,9 @@ def test_runtime_api_order_precheck_rejects_paper_trading_mode(monkeypatch) -> N
         token_env_value="dummy-paper-password",
     )
 
-    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_precheck(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert any(
         check["name"] == "trading_mode_is_live" and not check["ok"]
@@ -1096,7 +1176,9 @@ def test_runtime_api_order_precheck_rejects_paper_trading_mode(monkeypatch) -> N
     )
 
 
-def test_runtime_api_order_precheck_rejects_when_live_enabled_is_false(monkeypatch) -> None:
+def test_runtime_api_order_precheck_rejects_when_live_enabled_is_false(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_live_enabled_ng",
@@ -1107,7 +1189,9 @@ def test_runtime_api_order_precheck_rejects_when_live_enabled_is_false(monkeypat
         token_env_value="dummy-paper-password",
     )
 
-    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_precheck(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert any(
         check["name"] == "live_enabled_is_true" and not check["ok"]
@@ -1126,7 +1210,9 @@ def test_runtime_api_order_precheck_rejects_csv_data_source_mode(monkeypatch) ->
         token_env_value="dummy-paper-password",
     )
 
-    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_precheck(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert any(
         check["name"] == "data_source_mode_is_api" and not check["ok"]
@@ -1134,7 +1220,9 @@ def test_runtime_api_order_precheck_rejects_csv_data_source_mode(monkeypatch) ->
     )
 
 
-def test_runtime_api_order_precheck_rejects_1306_quantity_not_matching_lot_unit(monkeypatch) -> None:
+def test_runtime_api_order_precheck_rejects_1306_quantity_not_matching_lot_unit(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_1306_lot_ng",
@@ -1145,7 +1233,9 @@ def test_runtime_api_order_precheck_rejects_1306_quantity_not_matching_lot_unit(
         token_env_value="dummy-paper-password",
     )
 
-    payload = runtime.run_api_order_precheck(symbol="1306", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_precheck(
+        symbol="1306", side=OrderSide.BUY, quantity=1
+    )
 
     assert any(
         check["name"] == "quantity_matches_lot_unit" and not check["ok"]
@@ -1154,7 +1244,9 @@ def test_runtime_api_order_precheck_rejects_1306_quantity_not_matching_lot_unit(
     assert "指定銘柄の売買単位に合う数量を指定してください" in payload["next_action"]
 
 
-def test_runtime_api_order_precheck_accepts_1306_quantity_matching_lot_unit(monkeypatch) -> None:
+def test_runtime_api_order_precheck_accepts_1306_quantity_matching_lot_unit(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_1306_lot_ok",
@@ -1165,7 +1257,9 @@ def test_runtime_api_order_precheck_accepts_1306_quantity_matching_lot_unit(monk
         token_env_value="dummy-paper-password",
     )
 
-    payload = runtime.run_api_order_precheck(symbol="1306", side=OrderSide.BUY, quantity=10)
+    payload = runtime.run_api_order_precheck(
+        symbol="1306", side=OrderSide.BUY, quantity=10
+    )
 
     assert any(
         check["name"] == "quantity_matches_lot_unit" and check["ok"]
@@ -1184,7 +1278,9 @@ def test_runtime_api_order_precheck_accepts_safe_quantity_for_1321(monkeypatch) 
         token_env_value="dummy-paper-password",
     )
 
-    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_precheck(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert any(
         check["name"] == "quantity_is_safe_for_symbol" and check["ok"]
@@ -1192,7 +1288,9 @@ def test_runtime_api_order_precheck_accepts_safe_quantity_for_1321(monkeypatch) 
     )
 
 
-def test_runtime_api_order_precheck_rejects_unsafe_quantity_for_1321(monkeypatch) -> None:
+def test_runtime_api_order_precheck_rejects_unsafe_quantity_for_1321(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_1321_safe_ng",
@@ -1203,7 +1301,9 @@ def test_runtime_api_order_precheck_rejects_unsafe_quantity_for_1321(monkeypatch
         token_env_value="dummy-paper-password",
     )
 
-    payload = runtime.run_api_order_precheck(symbol="1321", side=OrderSide.BUY, quantity=10)
+    payload = runtime.run_api_order_precheck(
+        symbol="1321", side=OrderSide.BUY, quantity=10
+    )
 
     assert any(
         check["name"] == "quantity_is_safe_for_symbol" and not check["ok"]
@@ -1223,7 +1323,9 @@ def test_runtime_api_order_precheck_accepts_safe_quantity_for_1570(monkeypatch) 
         token_env_value="dummy-paper-password",
     )
 
-    payload = runtime.run_api_order_precheck(symbol="1570", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_precheck(
+        symbol="1570", side=OrderSide.BUY, quantity=1
+    )
 
     assert any(
         check["name"] == "quantity_is_safe_for_symbol" and check["ok"]
@@ -1231,7 +1333,9 @@ def test_runtime_api_order_precheck_accepts_safe_quantity_for_1570(monkeypatch) 
     )
 
 
-def test_runtime_api_order_precheck_rejects_unsafe_quantity_for_1570(monkeypatch) -> None:
+def test_runtime_api_order_precheck_rejects_unsafe_quantity_for_1570(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_precheck_1570_safe_ng",
@@ -1242,7 +1346,9 @@ def test_runtime_api_order_precheck_rejects_unsafe_quantity_for_1570(monkeypatch
         token_env_value="dummy-paper-password",
     )
 
-    payload = runtime.run_api_order_precheck(symbol="1570", side=OrderSide.BUY, quantity=10)
+    payload = runtime.run_api_order_precheck(
+        symbol="1570", side=OrderSide.BUY, quantity=10
+    )
 
     assert any(
         check["name"] == "quantity_is_safe_for_symbol" and not check["ok"]
@@ -1250,7 +1356,9 @@ def test_runtime_api_order_precheck_rejects_unsafe_quantity_for_1570(monkeypatch
     )
 
 
-def test_runtime_api_order_dry_run_does_not_fail_with_not_live_guard(monkeypatch) -> None:
+def test_runtime_api_order_dry_run_does_not_fail_with_not_live_guard(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_dry_run_not_live_guard",
@@ -1259,7 +1367,9 @@ def test_runtime_api_order_dry_run_does_not_fail_with_not_live_guard(monkeypatch
         resource_options={"use_real_validator": True},
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_dry_run(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert payload["ok"] is True
     assert "kabu_api_environment is not live" not in payload["errors"]
@@ -1273,19 +1383,25 @@ def test_runtime_api_order_dry_run_rejects_live_environment(monkeypatch) -> None
         kabu_api_environment=app_main.KabuApiEnvironment.LIVE,
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_dry_run(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert payload["ok"] is False
     assert "kabu_api_environment must be paper" in payload["errors"]
 
 
-def test_runtime_api_order_dry_run_rejects_symbol_outside_trade_symbols(monkeypatch) -> None:
+def test_runtime_api_order_dry_run_rejects_symbol_outside_trade_symbols(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_dry_run_symbol",
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="9999", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_dry_run(
+        symbol="9999", side=OrderSide.BUY, quantity=1
+    )
 
     assert payload["ok"] is False
     assert "symbol is not in trade_symbols" in payload["errors"]
@@ -1300,7 +1416,9 @@ def test_runtime_api_order_dry_run_rejects_quantity_over_max_order_quantity(
         max_order_quantity=1,
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=2)
+    payload = runtime.run_api_order_dry_run(
+        symbol="1321", side=OrderSide.BUY, quantity=2
+    )
 
     assert payload["ok"] is False
     assert "quantity exceeds max_order_quantity" in payload["errors"]
@@ -1317,7 +1435,9 @@ def test_runtime_api_order_dry_run_rejects_when_halted(monkeypatch) -> None:
         message="manual halt",
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_dry_run(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert payload["ok"] is False
     assert "trading is halted" in payload["errors"]
@@ -1332,7 +1452,9 @@ def test_runtime_api_order_dry_run_does_not_call_order_api_when_preflight_fails(
         resource_options={"preflight_error": RuntimeError("preflight failed")},
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_dry_run(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
     resources = _current_dry_run_resources()
 
     assert payload["ok"] is False
@@ -1349,7 +1471,9 @@ def test_runtime_api_order_dry_run_does_not_call_order_api_when_order_safety_fai
         resource_options={"guard_reason": "incomplete order exists"},
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_dry_run(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
     resources = _current_dry_run_resources()
 
     assert payload["ok"] is False
@@ -1365,14 +1489,19 @@ def test_runtime_api_order_dry_run_calls_order_sync_and_reconciliation_on_succes
         snapshot_name="api_order_dry_run_success",
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_dry_run(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
     resources = _current_dry_run_resources()
 
     assert payload["ok"] is True
     assert payload["executed_at"]
     assert payload["git_commit"]
     assert payload["config_summary"]["token_env_name"] == "KABU_API_PASSWORD"
-    assert payload["record_hint"] == "docs/paper_api_test_record_template.md に結果を記録してください"
+    assert (
+        payload["record_hint"]
+        == "docs/paper_api_test_record_template.md に結果を記録してください"
+    )
     assert resources.gateway.place_order_calls == 1
     assert resources.order_status_repository.get_order_status_calls == 1
     assert resources.position_reconciliation_service.call_count >= 2
@@ -1387,7 +1516,9 @@ def test_runtime_api_order_dry_run_does_not_add_order_before_api_send(
         snapshot_name="api_order_dry_run_no_pre_append",
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_dry_run(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
     resources = _current_dry_run_resources()
 
     assert payload["ok"] is True
@@ -1403,7 +1534,9 @@ def test_runtime_api_order_dry_run_gateway_internal_validate_also_passes(
         resource_options={"use_real_validator": True},
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_dry_run(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert payload["ok"] is True
 
@@ -1417,25 +1550,34 @@ def test_runtime_api_order_dry_run_rejects_when_existing_open_order_exists(
         resource_options={"use_real_validator": True, "open_orders_exist": True},
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_dry_run(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
     resources = _current_dry_run_resources()
 
     assert payload["ok"] is False
     assert resources.gateway.place_order_calls == 0
 
 
-def test_runtime_api_order_dry_run_returns_error_when_gateway_raises(monkeypatch) -> None:
+def test_runtime_api_order_dry_run_returns_error_when_gateway_raises(
+    monkeypatch,
+) -> None:
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_dry_run_gateway_error",
         resource_options={"gateway_error": RuntimeError("api failed")},
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_dry_run(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert payload["ok"] is False
     assert payload["errors"] == ["api failed"]
-    assert "kabuステーションが検証モードで起動しているか確認してください" in payload["next_action"]
+    assert (
+        "kabuステーションが検証モードで起動しているか確認してください"
+        in payload["next_action"]
+    )
 
 
 def test_runtime_api_order_dry_run_returns_reconciliation_failure_next_action(
@@ -1444,10 +1586,16 @@ def test_runtime_api_order_dry_run_returns_reconciliation_failure_next_action(
     runtime = _build_api_order_dry_run_runtime(
         monkeypatch,
         snapshot_name="api_order_dry_run_reconcile_ng",
-        resource_options={"post_order_reconciliation_error": RuntimeError("position reconciliation failed")},
+        resource_options={
+            "post_order_reconciliation_error": RuntimeError(
+                "position reconciliation failed"
+            )
+        },
     )
 
-    payload = runtime.run_api_order_dry_run(symbol="1321", side=OrderSide.BUY, quantity=1)
+    payload = runtime.run_api_order_dry_run(
+        symbol="1321", side=OrderSide.BUY, quantity=1
+    )
 
     assert payload["ok"] is False
     assert payload["reconciliation_result"] == "NG"
@@ -1883,6 +2031,8 @@ def _runtime_config(
         config.app,
         data_source_mode=data_source_mode,
         trading_mode=TradingMode.PAPER,
+        trade_symbols=("7203",),
+        max_order_quantity=100,
         snapshot_enabled=snapshot_enabled,
         snapshot_dir=str(snapshot_dir),
         recovery_enabled=recovery_enabled,

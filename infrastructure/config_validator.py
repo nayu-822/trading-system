@@ -56,7 +56,9 @@ def _validate_app_config(
     """
 
     if config.app.log_level not in LOG_LEVELS:
-        raise ConfigValidationError("log_level は有効な logging レベルで指定してください")
+        raise ConfigValidationError(
+            "log_level は有効な logging レベルで指定してください"
+        )
     if config.app.data_source_mode.value not in DATA_SOURCE_MODES:
         raise ConfigValidationError("data_source_mode は csv / api で指定してください")
     if config.app.trading_mode.value not in TRADING_MODES:
@@ -82,6 +84,8 @@ def _validate_app_config(
         )
     if config.app.rest_poll_interval_sec <= 0:
         raise ConfigValidationError("rest_poll_interval_sec は1以上で指定してください")
+    if config.app.default_order_type.upper() != "MARKET":
+        raise ConfigValidationError("default_order_type は MARKET のみ指定してください")
     if config.app.max_order_quantity < 1:
         raise ConfigValidationError("max_order_quantity は1以上で指定してください")
     if config.app.position_average_price_tolerance < 0:
@@ -144,7 +148,9 @@ def _validate_symbols(config: SystemConfig) -> None:
                 f"未対応の strategy が指定されています: {symbol.strategy}"
             )
         if not 0 < symbol.allocation_ratio <= 1:
-            raise ConfigValidationError("allocation_ratio は0より大きく1以下で指定してください")
+            raise ConfigValidationError(
+                "allocation_ratio は0より大きく1以下で指定してください"
+            )
         if symbol.lot_min <= 0:
             raise ConfigValidationError("lot_min は1以上で指定してください")
         if symbol.lot_max < symbol.lot_min:
@@ -177,7 +183,9 @@ def _validate_symbols(config: SystemConfig) -> None:
 
         effective_range_window = overrides.strategy_params.get("range_window")
         if effective_range_window is not None and int(effective_range_window) <= 0:
-            raise ConfigValidationError("override range_window は1以上で指定してください")
+            raise ConfigValidationError(
+                "override range_window は1以上で指定してください"
+            )
 
         effective_short_window = int(
             overrides.strategy_params.get(

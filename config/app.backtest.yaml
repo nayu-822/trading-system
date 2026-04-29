@@ -7,6 +7,7 @@ data_source_mode: csv
 log_level: INFO
 rest_poll_interval_sec: 5
 push_enabled: false
+default_order_type: MARKET
 max_order_quantity: 1
 trade_symbols:
   - "1306"

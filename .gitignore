@@ -4,3 +4,5 @@ tests/.tmp_*/
 __pycache__/
 *.py[cod]
 .env
+.venv
+.venv/

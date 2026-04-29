@@ -148,6 +148,7 @@ class TradingSymbolState:
 
     symbol: str
     lot_size: int
+    is_busy: bool = False
     orders: list[Order] = field(default_factory=list)
     trade_histories: list[TradeHistory] = field(default_factory=list)
     position: Position | None = None
@@ -227,6 +228,7 @@ class AppConfig:
     log_level: str
     rest_poll_interval_sec: int
     push_enabled: bool
+    default_order_type: str
     max_order_quantity: int
     trade_symbols: tuple[str, ...]
     position_reconciliation_enabled: bool
@@ -330,3 +332,18 @@ class SystemConfig:
     symbols: list[SymbolConfig]
     strategy: StrategyConfig
     risk: RiskConfig
+
+
+@dataclass(frozen=True)
+class TradingProcessConfig:
+    """TradingProcess 縺悟ｏ莉･髯仙ｮ壹☆繧区ｳｨ譁・ヵ繝ｪ繧ｷ繝ｼ縲・"""
+
+    trading_mode: TradingMode
+    live_enabled: bool
+    data_source_mode: DataSourceMode
+    kabu_api_environment: KabuApiEnvironment
+    trade_symbols: tuple[str, ...]
+    max_order_quantity: int
+    order_type: str
+    trading_start_time: str
+    trading_end_time: str

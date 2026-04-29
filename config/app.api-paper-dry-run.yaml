@@ -8,6 +8,7 @@ data_source_mode: api
 log_level: INFO
 rest_poll_interval_sec: 5
 push_enabled: false
+default_order_type: MARKET
 max_order_quantity: 10
 trade_symbols:
   - "1306"

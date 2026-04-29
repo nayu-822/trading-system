@@ -120,6 +120,18 @@ def test_validate_config_rejects_csv_live_mode(monkeypatch) -> None:
         validate_config(invalid_config)
 
 
+def test_validate_config_rejects_unsupported_default_order_type(monkeypatch) -> None:
+    config = load_config(Path("config"))
+    invalid_config = replace(
+        config,
+        app=replace(config.app, default_order_type="LIMIT"),
+    )
+    monkeypatch.setenv(config.app.kabu_api.token_env_name, "password")
+
+    with pytest.raises(ConfigValidationError):
+        validate_config(invalid_config)
+
+
 def test_validate_config_accepts_api_live_when_enabled(monkeypatch) -> None:
     config = load_config(Path("config"))
     api_live_app = replace(

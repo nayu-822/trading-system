@@ -5,9 +5,9 @@ from domain.enums import (
     EventType,
     KabuApiEnvironment,
     OrderSide,
-    TradingHaltReason,
     SignalType,
     StrategyType,
+    TradingHaltReason,
     TradingMode,
 )
 from domain.events import BaseEvent, EventFactory, MarketDataPayload, SignalPayload
@@ -208,6 +208,7 @@ def test_trading_process_counts_gateway_error_for_kill_switch() -> None:
     risk_manager = _risk_manager(api_error_limit=1)
     trading_process = TradingProcess(
         event_bus=EventBus(),
+        order_quantity=100,
         risk_manager=risk_manager,
         order_gateway=FailingGateway(),  # type: ignore[arg-type]
     )

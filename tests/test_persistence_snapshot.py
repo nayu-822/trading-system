@@ -202,7 +202,7 @@ def test_trading_process_restores_snapshot() -> None:
     storage = FileStorage()
     snapshot_path = _test_file_path("trading_snapshot_restore.json")
     _remove_file(snapshot_path)
-    original_process = TradingProcess(event_bus=EventBus())
+    original_process = TradingProcess(event_bus=EventBus(), order_quantity=100)
     state = original_process.get_state("7203")
     assert state.position is not None
     state.position.quantity = 100
@@ -247,7 +247,7 @@ def test_trading_process_continues_after_snapshot_restore() -> None:
         snapshot_path, original_process.get_snapshot(_timestamp()).to_dict()
     )
     event_bus = EventBus()
-    restored_process = TradingProcess(event_bus=event_bus)
+    restored_process = TradingProcess(event_bus=event_bus, order_quantity=100)
     snapshot_process = SnapshotProcess(
         event_bus=event_bus,
         trading_process=restored_process,
@@ -352,7 +352,10 @@ def test_trading_process_restores_trading_halt_state_from_snapshot() -> None:
         restored_process.risk_manager.state.trading_halt_reason
         == TradingHaltReason.POSITION_MISMATCH
     )
-    assert restored_process.risk_manager.state.trading_halt_message == "position mismatch detected"
+    assert (
+        restored_process.risk_manager.state.trading_halt_message
+        == "position mismatch detected"
+    )
     assert restored_process.risk_manager.state.trading_halt_halted_at is not None
     assert restored_process.risk_manager.state.requires_manual_resume is True
     _remove_file(snapshot_path)

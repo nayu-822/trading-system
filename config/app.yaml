@@ -38,6 +38,10 @@ rest_poll_interval_sec: 5
 # CSV 検証では false のままで問題ありません。
 push_enabled: false
 
+# TradingProcess が発注時に使う注文種別です。
+# 現行実装では MARKET のみ対応しています。
+default_order_type: MARKET
+
 # 1 回あたりの最大注文数量です。
 # 検証時は小さく、本番でも最初は小さく設定してください。
 # api-order-precheck / api-order-dry-run でもこの値を超える数量は拒否されます。
