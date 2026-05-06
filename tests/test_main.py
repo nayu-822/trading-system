@@ -139,7 +139,9 @@ def test_build_order_safety_state_provider_rejects_when_trading_is_halted() -> N
         raise AssertionError("ValueError was not raised")
 
 
-def test_build_api_order_dry_run_resources_enables_api_paper_orders(monkeypatch) -> None:
+def test_build_api_order_dry_run_resources_enables_api_paper_orders(
+    monkeypatch,
+) -> None:
     config = load_config(Path("config"))
     config = replace(
         config,
@@ -184,16 +186,22 @@ def test_main_halt_status_outputs_current_state(monkeypatch) -> None:
     )
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
-        lambda config: (_ for _ in ()).throw(AssertionError("runtime should not be built")),
+        lambda config: (_ for _ in ()).throw(
+            AssertionError("runtime should not be built")
+        ),
     )
     monkeypatch.setattr(
         app_main.KabuApiClient,
         "get_token",
-        lambda self: (_ for _ in ()).throw(AssertionError("token should not be fetched")),
+        lambda self: (_ for _ in ()).throw(
+            AssertionError("token should not be fetched")
+        ),
     )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
@@ -209,11 +217,15 @@ def test_main_config_summary_does_not_fetch_api_token(monkeypatch) -> None:
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main.KabuApiClient,
         "get_token",
-        lambda self: (_ for _ in ()).throw(AssertionError("token should not be fetched")),
+        lambda self: (_ for _ in ()).throw(
+            AssertionError("token should not be fetched")
+        ),
     )
     monkeypatch.setattr(
         app_main,
@@ -230,7 +242,9 @@ def test_main_config_summary_does_not_fetch_api_token(monkeypatch) -> None:
     assert '"command": "config-summary"' in output.getvalue()
 
 
-def test_main_uses_default_app_config_when_config_option_is_missing(monkeypatch) -> None:
+def test_main_uses_default_app_config_when_config_option_is_missing(
+    monkeypatch,
+) -> None:
     config = load_config(Path("config"))
     fake_logger = FakeLogger()
     loaded_paths: list[Path] = []
@@ -241,7 +255,9 @@ def test_main_uses_default_app_config_when_config_option_is_missing(monkeypatch)
         return config
 
     monkeypatch.setattr(app_main, "load_config", fake_load_config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(["paper-runbook"])
@@ -263,7 +279,9 @@ def test_main_uses_explicit_config_path_when_config_option_is_provided(
         return config
 
     monkeypatch.setattr(app_main, "load_config", fake_load_config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(
@@ -287,7 +305,9 @@ def test_main_uses_explicit_config_path_when_config_option_is_after_command(
         return config
 
     monkeypatch.setattr(app_main, "load_config", fake_load_config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(
@@ -305,7 +325,9 @@ def test_main_returns_readable_error_when_config_file_is_missing(monkeypatch) ->
         raise ConfigLoadError(f"設定ファイルが見つかりません: {path}")
 
     monkeypatch.setattr(app_main, "load_config", raise_config_load_error)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
 
     exit_code = app_main.main(["--config", "config/missing.yaml", "config-summary"])
 
@@ -318,7 +340,9 @@ def test_main_config_summary_does_not_call_order_or_position_apis(monkeypatch) -
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -329,13 +353,17 @@ def test_main_config_summary_does_not_call_order_or_position_apis(monkeypatch) -
     monkeypatch.setattr(
         app_main.KabuApiClient,
         "send_order",
-        lambda self, request: (_ for _ in ()).throw(AssertionError("order api should not be called")),
+        lambda self, request: (_ for _ in ()).throw(
+            AssertionError("order api should not be called")
+        ),
         raising=False,
     )
     monkeypatch.setattr(
         app_main.KabuApiClient,
         "fetch_positions",
-        lambda self: (_ for _ in ()).throw(AssertionError("position api should not be called")),
+        lambda self: (_ for _ in ()).throw(
+            AssertionError("position api should not be called")
+        ),
         raising=False,
     )
     monkeypatch.setattr(app_main.sys, "stdout", output)
@@ -351,7 +379,9 @@ def test_main_config_summary_includes_config_path(monkeypatch) -> None:
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(
@@ -368,7 +398,9 @@ def test_main_paper_runbook_outputs_text(monkeypatch) -> None:
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -379,7 +411,9 @@ def test_main_paper_runbook_outputs_text(monkeypatch) -> None:
     monkeypatch.setattr(
         app_main.KabuApiClient,
         "get_token",
-        lambda self: (_ for _ in ()).throw(AssertionError("token should not be fetched")),
+        lambda self: (_ for _ in ()).throw(
+            AssertionError("token should not be fetched")
+        ),
     )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
@@ -388,8 +422,14 @@ def test_main_paper_runbook_outputs_text(monkeypatch) -> None:
     assert exit_code == 0
     assert "command: paper-runbook" in output.getvalue()
     assert "python main.py config-summary" in output.getvalue()
-    assert "python main.py api-order-precheck --symbol 1321 --quantity 1" in output.getvalue()
-    assert "python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1" in output.getvalue()
+    assert (
+        "python main.py api-order-precheck --symbol 1321 --quantity 1"
+        in output.getvalue()
+    )
+    assert (
+        "python main.py api-order-dry-run --symbol 1321 --side BUY --quantity 1"
+        in output.getvalue()
+    )
     assert "python main.py halt-status" in output.getvalue()
 
 
@@ -398,7 +438,9 @@ def test_main_paper_runbook_outputs_json(monkeypatch) -> None:
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(["paper-runbook", "--json"])
@@ -425,7 +467,9 @@ def test_main_paper_runbook_does_not_call_validate_config(monkeypatch) -> None:
         validate_calls.append((True, allow_missing_api_password))
 
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(app_main, "validate_config", fake_validate_config)
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
@@ -456,7 +500,9 @@ def test_main_paper_runbook_succeeds_even_when_config_would_fail_validation(
     output = io.StringIO()
     monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
     monkeypatch.setattr(app_main, "load_config", lambda _: invalid_config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "validate_config",
@@ -474,7 +520,9 @@ def test_main_paper_runbook_succeeds_even_when_config_would_fail_validation(
     monkeypatch.setattr(
         app_main.KabuApiClient,
         "get_token",
-        lambda self: (_ for _ in ()).throw(AssertionError("token should not be fetched")),
+        lambda self: (_ for _ in ()).throw(
+            AssertionError("token should not be fetched")
+        ),
     )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
@@ -489,7 +537,9 @@ def test_main_paper_runbook_outputs_json_without_validation(monkeypatch) -> None
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "validate_config",
@@ -510,7 +560,9 @@ def test_main_paper_runbook_with_config_does_not_build_runtime(monkeypatch) -> N
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -521,7 +573,9 @@ def test_main_paper_runbook_with_config_does_not_build_runtime(monkeypatch) -> N
     monkeypatch.setattr(
         app_main.KabuApiClient,
         "get_token",
-        lambda self: (_ for _ in ()).throw(AssertionError("token should not be fetched")),
+        lambda self: (_ for _ in ()).throw(
+            AssertionError("token should not be fetched")
+        ),
     )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
@@ -544,16 +598,22 @@ def test_main_halt_sets_manual_halt_and_saves_snapshot(monkeypatch) -> None:
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
-        lambda config: (_ for _ in ()).throw(AssertionError("runtime should not be built")),
+        lambda config: (_ for _ in ()).throw(
+            AssertionError("runtime should not be built")
+        ),
     )
     monkeypatch.setattr(
         app_main.KabuApiClient,
         "get_token",
-        lambda self: (_ for _ in ()).throw(AssertionError("token should not be fetched")),
+        lambda self: (_ for _ in ()).throw(
+            AssertionError("token should not be fetched")
+        ),
     )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
@@ -583,7 +643,9 @@ def test_main_resume_success_saves_snapshot(monkeypatch) -> None:
     )
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -613,7 +675,9 @@ def test_main_resume_failure_keeps_halt_state(monkeypatch) -> None:
     )
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -650,7 +714,9 @@ def test_main_preflight_check_does_not_change_state(monkeypatch) -> None:
     )
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -687,11 +753,15 @@ def test_main_halt_status_outputs_json(monkeypatch) -> None:
     )
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
-        lambda config: (_ for _ in ()).throw(AssertionError("runtime should not be built")),
+        lambda config: (_ for _ in ()).throw(
+            AssertionError("runtime should not be built")
+        ),
     )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
@@ -702,12 +772,16 @@ def test_main_halt_status_outputs_json(monkeypatch) -> None:
     assert '"reason": "manual"' in output.getvalue()
 
 
-def test_main_resume_returns_error_when_runtime_initialization_fails(monkeypatch) -> None:
+def test_main_resume_returns_error_when_runtime_initialization_fails(
+    monkeypatch,
+) -> None:
     config = load_config(Path("config"))
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -730,7 +804,9 @@ def test_main_preflight_check_returns_error_when_runtime_initialization_fails(
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -753,7 +829,9 @@ def test_main_preflight_check_outputs_json_when_runtime_initialization_fails(
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -813,7 +891,9 @@ def test_main_api_order_dry_run_outputs_json(monkeypatch) -> None:
     )
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -842,7 +922,10 @@ def test_main_api_order_dry_run_outputs_json(monkeypatch) -> None:
     assert '"executed_at": "2026-04-26T10:00:00+09:00"' in output.getvalue()
     assert '"git_commit": "abc1234"' in output.getvalue()
     assert '"config_summary": {' in output.getvalue()
-    assert '"record_hint": "docs/paper_api_test_record_template.md に結果を記録してください"' in output.getvalue()
+    assert (
+        '"record_hint": "docs/paper_api_test_record_template.md に結果を記録してください"'
+        in output.getvalue()
+    )
     assert '"order_id": "api-order-1"' in output.getvalue()
     assert '"next_action": [' in output.getvalue()
     assert '"時間を置いて注文状態同期を確認してください"' in output.getvalue()
@@ -889,7 +972,9 @@ def test_main_api_order_precheck_outputs_json(monkeypatch) -> None:
     )
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -907,7 +992,10 @@ def test_main_api_order_precheck_outputs_json(monkeypatch) -> None:
     assert '"executed_at": "2026-04-26T10:00:00+09:00"' in output.getvalue()
     assert '"git_commit": "abc1234"' in output.getvalue()
     assert '"config_summary": {' in output.getvalue()
-    assert '"record_hint": "docs/paper_api_test_record_template.md に結果を記録してください"' in output.getvalue()
+    assert (
+        '"record_hint": "docs/paper_api_test_record_template.md に結果を記録してください"'
+        in output.getvalue()
+    )
     assert '"token_env_name_is_paper"' in output.getvalue()
     assert '"next_action": ["api-order-dry-run を実行できます"]' in output.getvalue()
 
@@ -944,7 +1032,9 @@ def test_main_api_order_precheck_outputs_next_action_on_failure(monkeypatch) -> 
     )
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -952,11 +1042,16 @@ def test_main_api_order_precheck_outputs_next_action_on_failure(monkeypatch) -> 
     )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
-    exit_code = app_main.main(["api-order-precheck", "--symbol", "1321", "--quantity", "1"])
+    exit_code = app_main.main(
+        ["api-order-precheck", "--symbol", "1321", "--quantity", "1"]
+    )
 
     assert exit_code == 1
     assert "next_action:" in output.getvalue()
-    assert "config/app.yaml の kabu_api_environment を paper にしてください" in output.getvalue()
+    assert (
+        "config/app.yaml の kabu_api_environment を paper にしてください"
+        in output.getvalue()
+    )
 
 
 def test_main_api_order_precheck_returns_formatted_result_when_api_password_is_missing(
@@ -982,7 +1077,9 @@ def test_main_api_order_precheck_returns_formatted_result_when_api_password_is_m
     output = io.StringIO()
     monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -992,7 +1089,9 @@ def test_main_api_order_precheck_returns_formatted_result_when_api_password_is_m
     )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
-    exit_code = app_main.main(["api-order-precheck", "--symbol", "1321", "--quantity", "1"])
+    exit_code = app_main.main(
+        ["api-order-precheck", "--symbol", "1321", "--quantity", "1"]
+    )
 
     assert exit_code == 1
     assert "ok: False" in output.getvalue()
@@ -1027,7 +1126,9 @@ def test_main_api_order_precheck_outputs_json_when_api_password_is_missing(
     output = io.StringIO()
     monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1072,7 +1173,9 @@ def test_main_api_order_dry_run_returns_exit_code_one_on_api_error(monkeypatch) 
             "base_url": config.app.kabu_api.base_url,
             "is_halted": False,
             "halt_reason": "",
-            "next_action": ["kabuステーションが検証モードで起動しているか確認してください"],
+            "next_action": [
+                "kabuステーションが検証モードで起動しているか確認してください"
+            ],
             "log_hint": ["command=api-order-dry-run で検索してください"],
             "checks": [],
             "errors": ["api failed"],
@@ -1080,7 +1183,9 @@ def test_main_api_order_dry_run_returns_exit_code_one_on_api_error(monkeypatch) 
     )
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1103,10 +1208,15 @@ def test_main_api_order_dry_run_returns_exit_code_one_on_api_error(monkeypatch) 
     assert exit_code == 1
     assert "api failed" in output.getvalue()
     assert "next_action:" in output.getvalue()
-    assert "kabuステーションが検証モードで起動しているか確認してください" in output.getvalue()
+    assert (
+        "kabuステーションが検証モードで起動しているか確認してください"
+        in output.getvalue()
+    )
 
 
-def test_main_api_order_dry_run_success_output_includes_next_action(monkeypatch) -> None:
+def test_main_api_order_dry_run_success_output_includes_next_action(
+    monkeypatch,
+) -> None:
     config = load_config(Path("config"))
     fake_logger = FakeLogger()
     fake_runtime = _FakeRuntime(
@@ -1138,7 +1248,9 @@ def test_main_api_order_dry_run_success_output_includes_next_action(monkeypatch)
     )
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1163,7 +1275,9 @@ def test_main_api_order_dry_run_with_invalid_quantity_does_not_crash(
     fake_runtime = _FakeRuntime(halt_state=TradingHaltState())
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1192,7 +1306,9 @@ def test_main_api_order_dry_run_with_invalid_quantity_outputs_json(
     fake_runtime = _FakeRuntime(halt_state=TradingHaltState())
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1229,7 +1345,9 @@ def test_main_api_order_dry_run_runtime_init_failure_with_invalid_quantity_outpu
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1274,7 +1392,9 @@ def test_main_api_order_dry_run_still_fails_when_api_password_is_missing(
     output = io.StringIO()
     monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(
@@ -1308,7 +1428,9 @@ def test_main_still_fails_on_normal_start_when_api_password_is_missing(
     fake_logger = FakeLogger()
     monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
 
     exit_code = app_main.main([])
 
@@ -1501,7 +1623,9 @@ def test_main_config_summary_outputs_json(monkeypatch) -> None:
     output = io.StringIO()
     monkeypatch.setenv(config.app.kabu_api.token_env_name, "set")
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(["config-summary", "--json"])
@@ -1534,7 +1658,9 @@ def test_main_config_summary_succeeds_when_api_password_is_missing(
     output = io.StringIO()
     monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1579,7 +1705,9 @@ def test_main_config_summary_outputs_json_when_api_password_is_missing(
     output = io.StringIO()
     monkeypatch.delenv("KABU_API_PASSWORD_PAPER", raising=False)
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
     exit_code = app_main.main(["config-summary", "--json"])
@@ -1650,7 +1778,9 @@ def test_main_api_order_precheck_succeeds_even_when_git_commit_resolution_times_
         ),
     )
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1711,7 +1841,9 @@ def test_main_api_order_precheck_save_result_creates_json_file(monkeypatch) -> N
     )
     monkeypatch.setattr(app_main, "PAPER_API_RESULTS_DIR", result_dir)
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1742,7 +1874,10 @@ def test_main_api_order_precheck_save_result_creates_json_file(monkeypatch) -> N
     saved_payload = json.loads(saved_text)
     assert saved_payload["executed_at"] == "2026-04-26T12:34:56+09:00"
     assert saved_payload["git_commit"] == "abc1234"
-    assert saved_payload["config_summary"]["token_env_name"] == config.app.kabu_api.token_env_name
+    assert (
+        saved_payload["config_summary"]["token_env_name"]
+        == config.app.kabu_api.token_env_name
+    )
     assert "super-secret-password" not in saved_text
 
 
@@ -1798,7 +1933,9 @@ def test_main_api_order_dry_run_save_result_creates_json_file(monkeypatch) -> No
     )
     monkeypatch.setattr(app_main, "PAPER_API_RESULTS_DIR", result_dir)
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1832,7 +1969,10 @@ def test_main_api_order_dry_run_save_result_creates_json_file(monkeypatch) -> No
     assert saved_payload["order_id"] == "api-order-1"
     assert saved_payload["order_status"] == "REQUESTED"
     assert saved_payload["config_path"] == "config/app.api-paper-dry-run.yaml"
-    assert saved_payload["config_summary"]["token_env_name"] == config.app.kabu_api.token_env_name
+    assert (
+        saved_payload["config_summary"]["token_env_name"]
+        == config.app.kabu_api.token_env_name
+    )
 
 
 def test_main_api_order_precheck_does_not_save_without_option(monkeypatch) -> None:
@@ -1849,7 +1989,9 @@ def test_main_api_order_precheck_does_not_save_without_option(monkeypatch) -> No
                 path.rmdir()
     monkeypatch.setattr(app_main, "PAPER_API_RESULTS_DIR", result_dir)
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1859,7 +2001,9 @@ def test_main_api_order_precheck_does_not_save_without_option(monkeypatch) -> No
     )
     monkeypatch.setattr(app_main.sys, "stdout", output)
 
-    exit_code = app_main.main(["api-order-precheck", "--symbol", "1321", "--quantity", "1"])
+    exit_code = app_main.main(
+        ["api-order-precheck", "--symbol", "1321", "--quantity", "1"]
+    )
 
     assert exit_code == 0
     assert not result_dir.exists()
@@ -1870,7 +2014,9 @@ def test_main_api_order_precheck_includes_config_path(monkeypatch) -> None:
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1904,7 +2050,9 @@ def test_main_api_order_dry_run_includes_config_path(monkeypatch) -> None:
     fake_logger = FakeLogger()
     output = io.StringIO()
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1933,8 +2081,7 @@ def test_main_api_order_dry_run_includes_config_path(monkeypatch) -> None:
     payload = json.loads(output.getvalue())
     assert payload["config_path"] == "config/app.api-paper-dry-run.yaml"
     assert (
-        payload["config_summary"]["config_path"]
-        == "config/app.api-paper-dry-run.yaml"
+        payload["config_summary"]["config_path"] == "config/app.api-paper-dry-run.yaml"
     )
 
 
@@ -1948,7 +2095,9 @@ def test_main_api_order_precheck_save_result_failure_returns_error(monkeypatch) 
 
     monkeypatch.setattr(app_main, "_write_paper_api_result_file", raise_save_error)
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -1989,7 +2138,9 @@ def test_main_api_order_dry_run_save_result_failure_preserves_order_result(
 
     monkeypatch.setattr(app_main, "_write_paper_api_result_file", raise_save_error)
     monkeypatch.setattr(app_main, "load_config", lambda _: config)
-    monkeypatch.setattr(app_main, "setup_logger", lambda level, process_name: fake_logger)
+    monkeypatch.setattr(
+        app_main, "setup_logger", lambda level, process_name: fake_logger
+    )
     monkeypatch.setattr(
         app_main,
         "build_application_runtime",
@@ -2055,7 +2206,9 @@ def test_save_paper_api_result_payload_avoids_overwrite_for_same_payload() -> No
     second_payload = dict(payload)
 
     first_ok = app_main._save_paper_api_result_payload(first_payload, base_dir=base_dir)
-    second_ok = app_main._save_paper_api_result_payload(second_payload, base_dir=base_dir)
+    second_ok = app_main._save_paper_api_result_payload(
+        second_payload, base_dir=base_dir
+    )
 
     assert first_ok is True
     assert second_ok is True
@@ -2103,7 +2256,9 @@ def test_save_paper_api_result_payload_does_not_overwrite_existing_file() -> Non
         "kabu_api_environment": "paper",
         "base_url": "http://localhost:18081/kabusapi",
     }
-    original_path = app_main._build_paper_api_result_file_path(payload, base_dir=base_dir)
+    original_path = app_main._build_paper_api_result_file_path(
+        payload, base_dir=base_dir
+    )
     original_path.parent.mkdir(parents=True, exist_ok=True)
     original_path.write_text("original", encoding="utf-8")
 
@@ -2115,7 +2270,9 @@ def test_save_paper_api_result_payload_does_not_overwrite_existing_file() -> Non
     assert Path(payload["result_file"]).exists()
 
 
-def test_save_paper_api_result_payload_result_file_points_to_actual_saved_file() -> None:
+def test_save_paper_api_result_payload_result_file_points_to_actual_saved_file() -> (
+    None
+):
     base_dir = Path("tests/.tmp_main_cli/paper_api_results_result_file")
     if base_dir.exists():
         for path in base_dir.rglob("*"):
@@ -2150,7 +2307,10 @@ def test_save_paper_api_result_payload_result_file_points_to_actual_saved_file()
     assert save_ok is True
     result_file = Path(payload["result_file"])
     assert result_file.exists()
-    assert json.loads(result_file.read_text(encoding="utf-8"))["executed_at"] == payload["executed_at"]
+    assert (
+        json.loads(result_file.read_text(encoding="utf-8"))["executed_at"]
+        == payload["executed_at"]
+    )
 
 
 def test_build_paper_api_result_file_path_sanitizes_unsafe_characters() -> None:
@@ -2393,7 +2553,17 @@ def test_coding_rules_include_utf8_and_mojibake_prevention_rules() -> None:
     rules = Path("docs/coding_rules.md").read_text(encoding="utf-8")
 
     assert "UTF-8" in rules
-    assert "文字化け" in rules
+    assert (
+        "文字化けしたコメント、docstring、ドキュメントを見つけた場合は放置せず修正する"
+        in rules
+    )
+
+
+def test_agents_is_restored_as_readable_japanese_markdown() -> None:
+    agents = Path("AGENTS.md").read_text(encoding="utf-8")
+
+    assert "## 目的" in agents
+    assert "説明・コメント・レビューは日本語で行う" in agents
 
 
 def _timestamp() -> datetime:

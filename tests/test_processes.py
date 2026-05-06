@@ -437,6 +437,21 @@ def test_trading_process_does_not_publish_when_risk_manager_is_missing() -> None
     assert received_events == []
 
 
+def test_trading_process_default_configuration_does_not_publish_when_risk_manager_is_missing() -> (
+    None
+):
+    event_bus = EventBus()
+    trading_process = TradingProcess(event_bus=event_bus)
+    received_events: list[BaseEvent[Any]] = []
+
+    trading_process.start()
+    event_bus.subscribe(EventType.ORDER_REQUESTED, received_events.append)
+    event_bus.publish(_create_signal_event(SignalType.BUY))
+
+    assert trading_process.risk_manager is None
+    assert received_events == []
+
+
 def test_trading_process_does_not_publish_when_symbol_state_is_busy() -> None:
     event_bus = EventBus()
     trading_process = _trading_process(event_bus=event_bus, order_quantity=50)

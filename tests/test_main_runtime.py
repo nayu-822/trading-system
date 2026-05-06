@@ -106,6 +106,23 @@ def test_runtime_keeps_csv_paper_flow(monkeypatch) -> None:
     assert state.position.quantity == 100
 
 
+def test_runtime_build_injects_risk_manager_in_csv_mode(monkeypatch) -> None:
+    snapshot_dir = _test_dir("csv_risk_manager")
+    config = _runtime_config(
+        data_source_mode=DataSourceMode.CSV,
+        snapshot_dir=snapshot_dir,
+    )
+    monkeypatch.setattr(
+        app_main,
+        "_build_external_data_process",
+        _fake_external_builder(_FakeExternalDataProcess(events=())),
+    )
+
+    runtime = app_main.build_application_runtime(config=config)
+
+    assert runtime.trading_process.risk_manager is not None
+
+
 def test_runtime_halts_when_startup_order_resync_fails_in_api_paper(
     monkeypatch,
 ) -> None:
